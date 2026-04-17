@@ -1,0 +1,14 @@
+# 網頁框架
+streamlit
+
+# 資料處理與計算
+pandas
+scikit-learn
+joblib
+
+# 雲端資料庫連線
+supabase
+
+# 網路請求與環境變數管理
+requests
+python-dotenv

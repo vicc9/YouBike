@@ -1,0 +1,38 @@
+name: YouBike Data Collector  # 🏷️ 給這個任務取個名字，會顯示在 GitHub 網頁上
+
+on:  # ⏰ 什麼時候要觸發這個任務？
+  schedule:
+    - cron: '0 * * * *'       # 這是「排程語法」，意思是：每小時的第 0 分鐘執行一次。
+  workflow_dispatch:          # 🔘 這是一個「手動按鈕」，加上這行，您就可以在 GitHub 網頁上手動點擊執行，不用傻等整點。
+
+jobs: # 👷 開始指派工作
+  collect-and-store:          # 任務代號 (可自訂)
+    runs-on: ubuntu-latest    # 💻 跟 GitHub 借一台最新的 Linux 虛擬電腦來跑程式
+    
+    steps:                    # 👣 按照順序執行的步驟：
+      
+      - name: Checkout repository
+        uses: actions/checkout@v3  
+        # 第一步：把您 GitHub 專案裡的程式碼 (包含 data_collector.py) 下載到這台虛擬電腦裡。
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'   
+          # 第二步：在這台虛擬電腦上安裝 Python 3.12 (與您本地端一致)。
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt  
+          # 第三步：打開我們寫好的清單，把 pandas, requests, supabase 等套件全部安裝好。
+
+      - name: Run data collector
+        env:  # 🔑 關鍵步驟：把 GitHub Secrets 裡的機密金鑰，注入到這台虛擬電腦的「環境變數」中。
+          TDX_CLIENT_ID: ${{ secrets.TDX_CLIENT_ID }}
+          TDX_CLIENT_SECRET: ${{ secrets.TDX_CLIENT_SECRET }}
+          CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
+          MOENV_API_KEY: ${{ secrets.MOENV_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python data_collector.py  
+        # 第四步：有了環境變數和程式碼，最後下達指令：執行這支爬蟲程式！
