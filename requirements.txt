@@ -1,15 +1,17 @@
-# 網頁框架
+# 網頁框架與地圖組件
 streamlit
 streamlit-folium
+streamlit-geolocation
 
-# 資料處理與計算
+# 資料處理與機器學習
 pandas
 scikit-learn
 joblib
 
-# 雲端資料庫連線
+# 雲端資料庫與環境變數
 supabase
-
-# 網路請求與環境變數管理
-requests
 python-dotenv
+
+# 網路請求與地理資訊
+requests
+geopy
