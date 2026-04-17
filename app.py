@@ -26,12 +26,21 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# 🌟 新增：透過 API 搜尋地點經緯度
+# 🌟 修正：透過 API 搜尋地點經緯度 (強制加上地區前綴)
 def get_coords_from_address(address):
     try:
-        geolocator = Nominatim(user_agent="my_youbike_app")
-        # 自動補上 "高雄" 縮小搜尋範圍
-        location = geolocator.geocode(f"{address}, 高雄市")
+        # 建議更改 user_agent，避免預設名稱在雲端被限制
+        geolocator = Nominatim(user_agent="my_youbike_app_tw_search_1")
+        
+        # 強制補上地區前綴，解決雲端主機 IP 導致的解析偏差問題
+        search_query = address
+        if "高雄" not in search_query:
+            search_query = f"高雄市{search_query}"
+        if "台灣" not in search_query and "Taiwan" not in search_query:
+            search_query = f"台灣{search_query}"
+
+        location = geolocator.geocode(search_query)
+        
         if location:
             return location.latitude, location.longitude
         return None
