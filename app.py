@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
 import joblib
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import time
 from datetime import datetime
 from streamlit_folium import st_folium
-import requests
 import os
 import math
 from dotenv import load_dotenv
@@ -26,21 +29,14 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# 🌟 修正：透過 API 搜尋地點經緯度 (強制加上地區前綴)
 def get_coords_from_address(address):
     try:
-        # 建議更改 user_agent，避免預設名稱在雲端被限制
-        geolocator = Nominatim(user_agent="my_youbike_app_tw_search_1")
-        
-        # 強制補上地區前綴，解決雲端主機 IP 導致的解析偏差問題
+        geolocator = Nominatim(user_agent="youbike_tw_search_v8", timeout=10)
         search_query = address
-        if "高雄" not in search_query:
-            search_query = f"高雄市{search_query}"
         if "台灣" not in search_query and "Taiwan" not in search_query:
-            search_query = f"台灣{search_query}"
+            search_query = f"台灣 {search_query}"
 
         location = geolocator.geocode(search_query)
-        
         if location:
             return location.latitude, location.longitude
         return None
@@ -48,91 +44,210 @@ def get_coords_from_address(address):
         return None
 
 # --- 資料抓取與快取 ---
-@st.cache_data(ttl=300) # 快取 5 分鐘，避免頻繁刷 API
-def fetch_all_data():
-    token = get_tdx_token()
-    df_static = get_station_info(token)
-    df_dynamic = get_youbike_data(token)
-    weather = get_current_weather()
-    
-    if df_static.empty or df_dynamic.empty:
-        return None, None
+@st.cache_data(ttl=600) 
+def fetch_all_youbike_data():
+    with st.spinner("🚀 正在從 TDX 依序抓取全台 YouBike 即時資訊 (約需 10-15 秒，請稍候)..."):
+        # 1. 取得 Token
+        token_url = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
+        headers = {'content-type': 'application/x-www-form-urlencoded'}
         
-    df_merged = pd.merge(df_static, df_dynamic, on='StationUID')
-    
-    # 執行預測邏輯
-    now = datetime.now()
-    next_hour = (now.hour + 1) % 24
-    features = pd.DataFrame({
-        'Hour': [next_hour] * len(df_merged),
-        'DayOfWeek': [now.weekday()] * len(df_merged),
-        'IsWeekend': [1 if now.weekday() >= 5 else 0] * len(df_merged),
-        'Temperature': [weather['Temperature']] * len(df_merged),
-        'Precipitation': [weather['Precipitation']] * len(df_merged)
-    })
-    
-    try:
-        model = joblib.load('youbike_model.pkl')
-        df_merged['Predicted_Bikes'] = model.predict(features)
-    except:
-        df_merged['Predicted_Bikes'] = df_merged['AvailableRentBikes']
+        client_id = os.getenv("TDX_CLIENT_ID")
+        client_secret = os.getenv("TDX_CLIENT_SECRET")
+        api_headers = {}
         
-    return df_merged, weather
+        if not client_id or not client_secret:
+            st.warning("⚠️ 警告：找不到 TDX API 金鑰！目前使用「訪客模式」，很容易觸發限制。")
+        else:
+            data = {
+                'grant_type': 'client_credentials',
+                'client_id': client_id,
+                'client_secret': client_secret
+            }
+            try:
+                res_token = requests.post(token_url, headers=headers, data=data)
+                if res_token.status_code == 200:
+                    token = res_token.json().get('access_token')
+                    api_headers = {'authorization': f'Bearer {token}'}
+                else:
+                    st.warning(f"⚠️ Token 申請失敗 (狀態碼: {res_token.status_code})。退回訪客模式。")
+            except Exception as e:
+                print(f"Token 獲取錯誤: {e}")
+
+        # ==========================================
+        # 🛡️ 2. 建立帶有「自動重試」機制的連線 Session
+        # ==========================================
+        session = requests.Session()
+        # 設定重試策略：遇到 429 或 50x 伺服器錯誤時，自動退避並重試最多 3 次
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,  # 重試間隔 (1秒, 2秒, 4秒...)
+            status_forcelist=[429, 500, 502, 503, 504]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+
+        # 3. 城市迴圈
+        cities = ['Taipei', 'NewTaipei', 'Taoyuan', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'Taichung', 'Chiayi', 'ChiayiCounty', 'Tainan', 'Kaohsiung', 'PingtungCounty']
+        all_stations = []
+        
+        for city in cities:
+            station_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Station/City/{city}?%24format=JSON"
+            avail_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/City/{city}?%24format=JSON"
+            
+            try:
+                # 🛑 改用 session.get() 發送請求，它會自動處理 429 重試
+                res_station_req = session.get(station_url, headers=api_headers, timeout=10)
+                res_avail_req = session.get(avail_url, headers=api_headers, timeout=10)
+                
+                if res_station_req.status_code == 200 and res_avail_req.status_code == 200:
+                    res_station = res_station_req.json()
+                    res_avail = res_avail_req.json()
+                    
+                    if isinstance(res_station, list) and isinstance(res_avail, list):
+                        avail_dict = {
+                            item.get('StationID'): {
+                                'AvailableRentBikes': item.get('AvailableRentBikes', 0),
+                                'AvailableReturnBikes': item.get('AvailableReturnBikes', 0)
+                            } for item in res_avail if item.get('StationID')
+                        }
+                        
+                        for station in res_station:
+                            sid = station.get('StationID')
+                            if sid in avail_dict:
+                                all_stations.append({
+                                    'StationUID': station.get('StationUID', ''),
+                                    'StationID': sid,
+                                    'StationName': station.get('StationName', {}).get('Zh_tw', ''),
+                                    'City': city,
+                                    'StationPositionLat': float(station.get('StationPosition', {}).get('PositionLat', 0)),
+                                    'StationPositionLon': float(station.get('StationPosition', {}).get('PositionLon', 0)),
+                                    'latitude': float(station.get('StationPosition', {}).get('PositionLat', 0)),
+                                    'longitude': float(station.get('StationPosition', {}).get('PositionLon', 0)),
+                                    'BikesCapacity': station.get('BikesCapacity', 0),
+                                    'AvailableRentBikes': avail_dict[sid]['AvailableRentBikes'],
+                                    'AvailableReturnBikes': avail_dict[sid]['AvailableReturnBikes']
+                                })
+                else:
+                     print(f"❌ {city} API 回傳狀態碼異常: Station={res_station_req.status_code}, Avail={res_avail_req.status_code}")
+                    
+            except Exception as e:
+                print(f"抓取 {city} 發生錯誤: {e}")
+            
+            # 🛑 關鍵節流點：強制停頓 0.5 秒。
+            # 每次迴圈發 2 個 Request，停頓 0.5 秒 = 每秒 4 TPS，絕對不會超過 TDX 的 5 TPS 限制！
+            time.sleep(0.5)
+            
+        df_merged = pd.DataFrame(all_stations)
+        if df_merged.empty:
+            return None, None
+        
+        # 4. 加入天氣與預測資料
+        weather = get_current_weather()
+        now = datetime.now()
+        features = pd.DataFrame({
+            'Hour': [(now.hour + 1) % 24] * len(df_merged),
+            'DayOfWeek': [now.weekday()] * len(df_merged),
+            'IsWeekend': [1 if now.weekday() >= 5 else 0] * len(df_merged),
+            'Temperature': [weather.get('Temperature', 25) if weather else 25] * len(df_merged),
+            'Precipitation': [weather.get('Precipitation', 0) if weather else 0] * len(df_merged)
+        })
+        
+        try:
+            model = joblib.load('youbike_model.pkl')
+            df_merged['Predicted_Bikes'] = model.predict(features)
+        except:
+            df_merged['Predicted_Bikes'] = df_merged['AvailableRentBikes']
+            
+        return df_merged, weather
 
 # --- Streamlit 介面 ---
-st.set_page_config(layout="wide", page_title="高雄 YouBike 智慧導覽")
-st.title("🚲 智慧型 YouBike 2.0 防撲空導覽圖")
+st.set_page_config(layout="wide", page_title="全台 YouBike 智慧導覽")
+st.title("🚲 智慧型 YouBike 2.0 防撲空導覽圖 (全台版)")
 
-# 🔄 進入頁面自動抓取資料
-df_all, current_weather = fetch_all_data()
+# --- Session State 初始化 ---
+if 'my_lat' not in st.session_state:
+    st.session_state.my_lat = 25.0478
+if 'my_lon' not in st.session_state:
+    st.session_state.my_lon = 121.5170
+if 'has_located' not in st.session_state:
+    st.session_state.has_located = False
+if 'last_location_method' not in st.session_state:
+    st.session_state.last_location_method = "🔍 智慧搜尋地點"
+
+df_all, current_weather = fetch_all_youbike_data()
 
 if df_all is None:
-    st.error("無法連線至 TDX API，請檢查網路或金鑰。")
+    st.error("無法連線至 TDX API 或抓取不到資料，請檢查網路或 API 金鑰。")
     st.stop()
 
 # ----------------------------------------
-# 🎛️ 側邊欄設定 (一進來就顯示)
+# 🎛️ 側邊欄設定
 # ----------------------------------------
 st.sidebar.header("📍 您的位置")
 
-# 🌟 新增：讓使用者明確選擇定位方式
 location_method = st.sidebar.radio(
     "請選擇定位方式：", 
-    ["🔍 手動輸入地點", "🛰️ 使用 GPS 定位"]
+    ["🔍 智慧搜尋地點", "🛰️ 使用 GPS 定位"]
 )
 
-# 邏輯分流：根據使用者的選擇執行對應的定位方式
+if st.session_state.last_location_method != location_method:
+    st.session_state.has_located = False
+    st.session_state.last_location_method = location_method
+    st.rerun()
+
 if location_method == "🛰️ 使用 GPS 定位":
-    # 模式 A：GPS 定位
     location = streamlit_geolocation()
     if location and location.get('latitude'):
-        my_lat, my_lon = location['latitude'], location['longitude']
-        st.sidebar.success("✅ 已使用 GPS 定位")
+        st.session_state.my_lat = location['latitude']
+        st.session_state.my_lon = location['longitude']
+        st.session_state.has_located = True
+        st.sidebar.success("✅ 已成功獲取 GPS 定位")
     else:
         st.sidebar.info("👆 請點擊上方 ⌖ 按鈕獲取您的目前位置")
-        my_lat, my_lon = 22.6394, 120.3025 # 如果還沒按，給預設值
         
 else:
-    # 模式 B：手動輸入 (包含路名)
-    search_address = st.sidebar.text_input("輸入地點或路名 (例如：高雄巨蛋、中山路)", "")
-    if search_address:
-        with st.sidebar.spinner("搜尋中..."):
-            coords = get_coords_from_address(search_address)
+    search_query = st.sidebar.text_input(
+        "請輸入站點名稱、地標或地址：", 
+        placeholder="例如: 高雄車站 或 左營巨蛋",
+        value=""
+    )
+    
+    if search_query:
+        sq_tw = search_query.replace("台", "臺")
+        sq_cn = search_query.replace("臺", "台")
+        
+        mask = df_all['StationName'].astype(str).str.contains(sq_tw, case=False, na=False) | \
+               df_all['StationName'].astype(str).str.contains(sq_cn, case=False, na=False) | \
+               df_all['StationName'].astype(str).str.contains(search_query, case=False, na=False)
+               
+        matched_df = df_all[mask].head(15)
+        
+        if not matched_df.empty:
+            options_list = (matched_df['StationName']).tolist()
+            selected_station = st.sidebar.selectbox("💡 找到相符站點，請確認：", options=options_list)
+            
+            target_row = matched_df[(matched_df['StationName']) == selected_station].iloc[0]
+            st.session_state.my_lat = float(target_row['StationPositionLat'])
+            st.session_state.my_lon = float(target_row['StationPositionLon'])
+            st.session_state.has_located = True
+            st.sidebar.success(f"📍 已定位至：{selected_station}")
+            
+        else:
+            st.sidebar.info(f"💡 找不到名為「{search_query}」的站點，正在為您嘗試搜尋地標或地址座標...")
+            coords = get_coords_from_address(search_query)
             if coords:
-                my_lat, my_lon = coords
-                st.sidebar.success(f"📍 已定位至：{search_address}")
+                st.session_state.my_lat, st.session_state.my_lon = coords
+                st.session_state.has_located = True
+                st.sidebar.success(f"📍 已定位至地點：{search_query}")
             else:
-                st.sidebar.error("找不到該地點，請嘗試加入『高雄市』或換個關鍵字。")
-                my_lat, my_lon = 22.6394, 120.3025
-    else:
-        st.sidebar.info("👆 請在上方輸入您想查詢的地點或路名")
-        my_lat, my_lon = 22.6394, 120.3025 # 如果還沒輸入，給預設值
+                st.sidebar.error("❌ 找不到該地點，請嘗試輸入更準確的地址。")
+                st.session_state.has_located = False
 
 st.sidebar.markdown("---")
 st.sidebar.header("🎯 尋找條件")
 mode = st.sidebar.radio("需求：", ["我要借車 🚲", "我要還車 🅿️"])
 min_amount = st.sidebar.slider("最少需要數量：", 1, 20, 3)
-station_keyword = st.sidebar.text_input("🔍 過濾站點名稱 (選填)：")
 
 if st.sidebar.button("🔄 立即重新整理車況"):
     st.cache_data.clear()
@@ -145,8 +260,6 @@ target_col = 'Predicted_Bikes' if mode == "我要借車 🚲" else 'AvailableRet
 map_mode = "rent" if mode == "我要借車 🚲" else "return"
 
 filtered_df = df_all[df_all[target_col] >= min_amount].copy()
-if station_keyword:
-    filtered_df = filtered_df[filtered_df['StationName'].astype(str).str.contains(station_keyword, na=False)]
 
 # ----------------------------------------
 # 📊 顯示區 (地圖與資訊)
@@ -155,34 +268,33 @@ col1, col2 = st.columns([1, 1])
 with col1:
     st.write(f"🌤️ **天氣：** {current_weather['Temperature']}°C | 🌧️ **降雨：** {current_weather['Precipitation']}mm")
 with col2:
-    st.write(f"📋 **搜尋結果：** {len(filtered_df)} 站")
+    st.write(f"📋 **全台符合條件站點總數：** {len(filtered_df)} 站")
 
-if not filtered_df.empty:
-    # 1. 計算所有站點與您的距離
-    filtered_df['Distance_km'] = filtered_df.apply(
-        lambda row: calculate_distance(my_lat, my_lon, row['StationPositionLat'], row['StationPositionLon']), axis=1
-    )
-    
-    # 2. 找出最近的站點並顯示文字提示
-    closest = filtered_df.loc[filtered_df['Distance_km'].idxmin()]
-    s_name = closest['StationName']['Zh_tw'] if isinstance(closest['StationName'], dict) else closest['StationName']
-    st.success(f"🎯 推薦最近站點：**{s_name}** (距離約 {closest['Distance_km']:.2f} km)")
-    
-    # 🌟 關鍵修正：只保留距離您「 2 公里以內」的站點來畫地圖
-    nearby_df = filtered_df[filtered_df['Distance_km'] <= 2.0]
-    
-    # 防呆機制：如果 2 公里內剛好完全沒半台車，就強迫顯示最近的 5 個站點
-    if nearby_df.empty:
-        nearby_df = filtered_df.nsmallest(5, 'Distance_km')
-    
-    # 3. 將「過濾後的附近站點 (nearby_df)」交給地圖，而不是全高雄的站點
-    m = create_map(nearby_df, my_lat, my_lon, mode=map_mode)
-    
-    # 將地圖的 key 綁定經緯度，確保位置一變就重新繪製
-    st_folium(m, use_container_width=True, height=500, key=f"map_{my_lat}_{my_lon}")
-    
-    # 導航按鈕
-    nav_url = f"https://www.google.com/maps/dir/?api=1&origin={my_lat},{my_lon}&destination={closest['StationPositionLat']},{closest['StationPositionLon']}&travelmode=walking"
-    st.link_button("🚀 開啟 Google Maps 導航", nav_url)
+if not st.session_state.has_located:
+    st.info("👋 歡迎使用！請從左側面板搜尋地點或使用 GPS 定位，地圖才會開始顯示您附近的 YouBike 站點喔！")
+    m = create_map(pd.DataFrame(columns=filtered_df.columns), 25.0478, 121.5170, mode=map_mode)
+    st_folium(m, use_container_width=True, height=500, key="map_initial")
 else:
-    st.error("😭 找不到符合條件的站點，請調整過濾條件。")
+    if not filtered_df.empty:
+        filtered_df['Distance_km'] = filtered_df.apply(
+            lambda row: calculate_distance(st.session_state.my_lat, st.session_state.my_lon, row['StationPositionLat'], row['StationPositionLon']), axis=1
+        )
+        
+        nearby_df = filtered_df[filtered_df['Distance_km'] <= 1.5]
+        
+        if nearby_df.empty:
+            st.warning("😭 您的所在位置周圍 1.5 公里內找不到符合「最少需要數量」條件的站點。")
+            m = create_map(pd.DataFrame(columns=filtered_df.columns), st.session_state.my_lat, st.session_state.my_lon, mode=map_mode)
+            st_folium(m, use_container_width=True, height=500, key=f"map_empty_{st.session_state.my_lat}_{mode}_{min_amount}")
+        else:
+            closest = nearby_df.loc[nearby_df['Distance_km'].idxmin()]
+            s_name = closest['StationName']
+            st.success(f"🎯 推薦最近站點：**{s_name}** (距離約 {closest['Distance_km']:.2f} km)")
+            
+            m = create_map(nearby_df, st.session_state.my_lat, st.session_state.my_lon, mode=map_mode)
+            st_folium(m, use_container_width=True, height=500, key=f"map_{st.session_state.my_lat}_{st.session_state.my_lon}_{mode}_{min_amount}")
+            
+            nav_url = f"https://www.google.com/maps/dir/?api=1&origin={st.session_state.my_lat},{st.session_state.my_lon}&destination={closest['StationPositionLat']},{closest['StationPositionLon']}&travelmode=walking"
+            st.link_button("🚀 開啟 Google Maps 導航", nav_url)
+    else:
+        st.error("😭 目前全台找不到符合條件的站點，請調整側邊欄的過濾條件。")
