@@ -146,11 +146,18 @@ def fetch_all_youbike_data():
         weather = get_current_weather()
         now = datetime.now()
         features = pd.DataFrame({
-            'Hour': [(now.hour + 1) % 24] * len(df_merged),
-            'DayOfWeek': [now.weekday()] * len(df_merged),
-            'IsWeekend': [1 if now.weekday() >= 5 else 0] * len(df_merged),
-            'Temperature': [weather.get('Temperature', 25) if weather else 25] * len(df_merged),
-            'Precipitation': [weather.get('Precipitation', 0) if weather else 0] * len(df_merged)
+            'hour': [(now.hour + 1) % 24] * len(df_merged),
+            'day_of_week': [now.weekday()] * len(df_merged),
+            'is_weekend': [1 if now.weekday() >= 5 else 0] * len(df_merged),
+            'month': [now.month] * len(df_merged),
+            'is_holiday': [0] * len(df_merged), # 實務上需接行事曆 API，這邊先假定 0
+            'temperature': [weather.get('Temperature', 25) if weather else 25] * len(df_merged),
+            'precipitation': [weather.get('Precipitation', 0) if weather else 0] * len(df_merged),
+            'wind_speed': [0] * len(df_merged), # 請從天氣 API 補上，或先給 0
+            'aqi': [50] * len(df_merged),       # 請從天氣 API 補上，或先給 50
+            'dist_to_mrt': [99999] * len(df_merged), # 計算經緯度或給預設值
+            'station_capacity': df_merged['BikesCapacity'], 
+            'bikes_1h_ago': df_merged['AvailableRentBikes'] # 簡單拿現有車輛當基準
         })
         
         try:
@@ -184,7 +191,7 @@ if df_all is None:
 # ----------------------------------------
 # 🎛️ 側邊欄設定
 # ----------------------------------------
-st.sidebar.header("📍 您的位置")
+st.sidebar.header("📍 尋找位置")
 
 location_method = st.sidebar.radio(
     "請選擇定位方式：", 
@@ -294,7 +301,7 @@ else:
             m = create_map(nearby_df, st.session_state.my_lat, st.session_state.my_lon, mode=map_mode)
             st_folium(m, use_container_width=True, height=500, key=f"map_{st.session_state.my_lat}_{st.session_state.my_lon}_{mode}_{min_amount}")
             
-            nav_url = f"https://www.google.com/maps/dir/?api=1&origin={st.session_state.my_lat},{st.session_state.my_lon}&destination={closest['StationPositionLat']},{closest['StationPositionLon']}&travelmode=walking"
+            nav_url = f"https://www.google.com/maps/dir/?api=1&destination={closest['StationPositionLat']},{closest['StationPositionLon']}&travelmode=walking"
             st.link_button("🚀 開啟 Google Maps 導航", nav_url)
     else:
         st.error("😭 目前全台找不到符合條件的站點，請調整側邊欄的過濾條件。")
