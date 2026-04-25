@@ -46,8 +46,9 @@ def get_coords_from_address(address):
 # --- 資料抓取與快取 ---
 @st.cache_data(ttl=600) 
 def fetch_all_youbike_data():
-    with st.spinner("🚀 正在從 TDX 依序抓取全台 YouBike 即時資訊 (約需 10-15 秒，請稍候)..."):
-        # 1. 取得 Token
+    
+    # 【階段一】獲取 Token 與設定 Session
+    with st.spinner("🔑 正在獲取 TDX 授權與準備連線..."):
         token_url = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
         headers = {'content-type': 'application/x-www-form-urlencoded'}
         
@@ -73,21 +74,18 @@ def fetch_all_youbike_data():
             except Exception as e:
                 print(f"Token 獲取錯誤: {e}")
 
-        # ==========================================
-        # 🛡️ 2. 建立帶有「自動重試」機制的連線 Session
-        # ==========================================
         session = requests.Session()
-        # 設定重試策略：遇到 429 或 50x 伺服器錯誤時，自動退避並重試最多 3 次
         retry_strategy = Retry(
             total=3,
-            backoff_factor=1,  # 重試間隔 (1秒, 2秒, 4秒...)
+            backoff_factor=1,  
             status_forcelist=[429, 500, 502, 503, 504]
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
 
-        # 3. 城市迴圈
+    # 【階段二】依序抓取全台資料
+    with st.spinner("📡 正在從 TDX 依序抓取全台 12 縣市 YouBike 站點與車況 (約需 6-10 秒)..."):
         cities = ['Taipei', 'NewTaipei', 'Taoyuan', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'Taichung', 'Chiayi', 'ChiayiCounty', 'Tainan', 'Kaohsiung', 'PingtungCounty']
         all_stations = []
         
@@ -96,7 +94,6 @@ def fetch_all_youbike_data():
             avail_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/City/{city}?%24format=JSON"
             
             try:
-                # 🛑 改用 session.get() 發送請求，它會自動處理 429 重試
                 res_station_req = session.get(station_url, headers=api_headers, timeout=10)
                 res_avail_req = session.get(avail_url, headers=api_headers, timeout=10)
                 
@@ -134,15 +131,16 @@ def fetch_all_youbike_data():
             except Exception as e:
                 print(f"抓取 {city} 發生錯誤: {e}")
             
-            # 🛑 關鍵節流點：強制停頓 0.5 秒。
-            # 每次迴圈發 2 個 Request，停頓 0.5 秒 = 每秒 4 TPS，絕對不會超過 TDX 的 5 TPS 限制！
             time.sleep(0.5)
             
         df_merged = pd.DataFrame(all_stations)
-        if df_merged.empty:
-            return None, None
+
+    # 若無資料直接中斷
+    if df_merged.empty:
+        return None, None
         
-        # 4. 加入天氣與預測資料
+    # 【階段三】取得天氣並進行預測
+    with st.spinner("🤖 正在取得即時天氣並透過 AI 模型預測借還車狀況..."):
         weather = get_current_weather()
         now = datetime.now()
         features = pd.DataFrame({
@@ -150,21 +148,18 @@ def fetch_all_youbike_data():
             'day_of_week': [now.weekday()] * len(df_merged),
             'is_weekend': [1 if now.weekday() >= 5 else 0] * len(df_merged),
             'month': [now.month] * len(df_merged),
-            'is_holiday': [0] * len(df_merged), # 實務上需接行事曆 API，這邊先假定 0
+            'is_holiday': [0] * len(df_merged), 
             'temperature': [weather.get('Temperature', 25) if weather else 25] * len(df_merged),
             'precipitation': [weather.get('Precipitation', 0) if weather else 0] * len(df_merged),
-            'wind_speed': [0] * len(df_merged), # 請從天氣 API 補上，或先給 0
-            'aqi': [50] * len(df_merged),       # 請從天氣 API 補上，或先給 50
-            'dist_to_mrt': [99999] * len(df_merged), # 計算經緯度或給預設值
+            'wind_speed': [0] * len(df_merged), 
+            'aqi': [50] * len(df_merged),       
+            'dist_to_mrt': [99999] * len(df_merged), 
             'station_capacity': df_merged['BikesCapacity'], 
-            'bikes_1h_ago': df_merged['AvailableRentBikes'] # 簡單拿現有車輛當基準
+            'bikes_1h_ago': df_merged['AvailableRentBikes'] 
         })
         
         try:
-            # 將 Pandas DataFrame 轉成 JSON 格式以符合 API 傳輸標準
             features_dict = features.to_dict(orient='records') 
-    
-            # 呼叫您佈署在 Render 的 API 網址
             response = requests.post("https://youbike-wrfi.onrender.com/predict", json=features_dict, timeout=120)
     
             if response.status_code == 200:
@@ -175,7 +170,7 @@ def fetch_all_youbike_data():
             print(f"API 呼叫失敗: {e}")
             df_merged['Predicted_Bikes'] = df_merged['AvailableRentBikes']
             
-        return df_merged, weather
+    return df_merged, weather
 
 # --- Streamlit 介面 ---
 st.set_page_config(layout="wide", page_title="全台 YouBike 智慧導覽")
@@ -310,6 +305,7 @@ else:
             m = create_map(nearby_df, st.session_state.my_lat, st.session_state.my_lon, mode=map_mode)
             st_folium(m, use_container_width=True, height=500, key=f"map_{st.session_state.my_lat}_{st.session_state.my_lon}_{mode}_{min_amount}")
             
+            # 使用官方標準的 Google Maps 導航 URL 格式
             nav_url = f"https://www.google.com/maps/dir/?api=1&destination={closest['StationPositionLat']},{closest['StationPositionLon']}&travelmode=walking"
             st.link_button("🚀 開啟 Google Maps 導航", nav_url)
     else:
