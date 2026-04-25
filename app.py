@@ -161,9 +161,18 @@ def fetch_all_youbike_data():
         })
         
         try:
-            model = joblib.load('youbike_model.pkl')
-            df_merged['Predicted_Bikes'] = model.predict(features)
-        except:
+            # 將 Pandas DataFrame 轉成 JSON 格式以符合 API 傳輸標準
+            features_dict = features.to_dict(orient='records') 
+    
+            # 呼叫您佈署在 Render 的 API 網址
+            response = requests.post("https://youbike-wrfi.onrender.com/predict", json=features_dict, timeout=120)
+    
+            if response.status_code == 200:
+                df_merged['Predicted_Bikes'] = response.json()['predictions']
+            else:
+                df_merged['Predicted_Bikes'] = df_merged['AvailableRentBikes']
+        except Exception as e:
+            print(f"API 呼叫失敗: {e}")
             df_merged['Predicted_Bikes'] = df_merged['AvailableRentBikes']
             
         return df_merged, weather

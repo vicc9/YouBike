@@ -15,3 +15,5 @@ python-dotenv
 # 網路請求與地理資訊
 requests
 geopy
+fastapi
+uvicorn

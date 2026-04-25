@@ -14,7 +14,7 @@ load_dotenv()
 # ==========================================
 
 def get_tdx_data():
-    """獲取 TDX YouBike 即時動態與靜態容量資料"""
+    """獲取 TDX YouBike 即時動態與靜態容量資料 (全台各大縣市)"""
     app_id = os.getenv('TDX_CLIENT_ID')
     app_key = os.getenv('TDX_CLIENT_SECRET')
     
@@ -31,21 +31,53 @@ def get_tdx_data():
     token = auth_response.json().get("access_token")
     headers = {"authorization": f"Bearer {token}"}
 
-    print("✅ TDX Token 取得成功，開始下載高雄 YouBike 資料...")
+    # 建立全台有 YouBike 的縣市清單
+    cities = [
+        "Taipei", "NewTaipei", "Taoyuan", "Hsinchu", "HsinchuCounty", 
+        "MiaoliCounty", "Taichung", "Chiayi", "Tainan", "Kaohsiung", "PingtungCounty"
+    ]
+
+    print(f"✅ TDX Token 取得成功，開始下載全台 {len(cities)} 個縣市的 YouBike 資料...")
     
-    # 抓取靜態資料 (為了取得總柱數 StationCapacity)
-    static_url = "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/City/Kaohsiung?%24format=JSON"
-    static_res = requests.get(static_url, headers=headers).json()
-    df_static = pd.DataFrame(static_res)[['StationUID', 'BikesCapacity']]
-    
-    # 抓取動態資料 (目前可用車輛數)
-    dynamic_url = "https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/City/Kaohsiung?%24format=JSON"
-    dynamic_res = requests.get(dynamic_url, headers=headers).json()
-    df_dynamic = pd.DataFrame(dynamic_res)[['StationUID', 'AvailableRentBikes']]
-    
-    # 合併兩張表
-    df_merged = pd.merge(df_static, df_dynamic, on='StationUID')
-    return df_merged
+    all_merged_df = pd.DataFrame()
+
+    for city in cities:
+        print(f"🔄 正在抓取 {city} 的資料...")
+        try:
+            # 抓取靜態資料 (為了取得總柱數 StationCapacity)
+            static_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Station/City/{city}?%24format=JSON"
+            static_res = requests.get(static_url, headers=headers)
+            
+            if static_res.status_code != 200 or not static_res.json():
+                print(f"  ⚠️ {city} 靜態資料無回應")
+                continue
+                
+            df_static = pd.DataFrame(static_res.json())[['StationUID', 'BikesCapacity']]
+            
+            # 抓取動態資料 (目前可用車輛數)
+            dynamic_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/City/{city}?%24format=JSON"
+            dynamic_res = requests.get(dynamic_url, headers=headers)
+            
+            if dynamic_res.status_code != 200 or not dynamic_res.json():
+                print(f"  ⚠️ {city} 動態資料無回應")
+                continue
+                
+            df_dynamic = pd.DataFrame(dynamic_res.json())[['StationUID', 'AvailableRentBikes']]
+            
+            # 合併該縣市的兩張表
+            df_merged = pd.merge(df_static, df_dynamic, on='StationUID')
+            
+            # 將該縣市資料加到全台總表中
+            all_merged_df = pd.concat([all_merged_df, df_merged], ignore_index=True)
+            
+            # 稍微暫停 0.5 秒，避免密集請求被 TDX 伺服器阻擋 (Rate Limit)
+            time.sleep(0.5)
+            
+        except Exception as e:
+            print(f"❌ 獲取 {city} 資料時發生錯誤: {e}")
+
+    print(f"✅ 全台資料抓取完畢！共取得 {len(all_merged_df)} 個站點。")
+    return all_merged_df
 
 def get_weather_and_aqi():
     """使用中央氣象署 (CWA) 抓取天氣，環境部 (MOENV) 抓取 AQI"""
