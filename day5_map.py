@@ -42,13 +42,19 @@ def create_map(df_stations, my_lat, my_lon, mode="rent"):
         elif amount < 10: color = 'orange'
         else: color = 'green'
 
-        # 🌟 核心修正：判斷這個站點是否與「搜尋的目標」座標幾乎完全重疊 (誤差小於 0.00001 度)
-        is_target = abs(row['StationPositionLat'] - my_lat) < 1e-5 and abs(row['StationPositionLon'] - my_lon) < 1e-5
+        # 🌟 核心修正：
+        # 1. 優先使用 app.py 算好的 Distance_km (距離 < 0.02km / 20公尺 即視為重疊)
+        # 2. 放寬經緯度浮點數誤差容忍度到 0.0002
+        dist_km = row.get('Distance_km', 999)
+        lat_diff = abs(row['StationPositionLat'] - my_lat)
+        lon_diff = abs(row['StationPositionLon'] - my_lon)
+        
+        is_target = (dist_km < 0.02) or (lat_diff < 0.0002 and lon_diff < 0.0002)
 
         if is_target:
             target_is_station = True
             color = 'blue'  # 強制將搜尋的目標站點變成藍色
-            popup_text = f"<div style='color:blue;'><b>📍 您搜尋的站點</b></div>" + popup_base
+            popup_text = f"<div style='color:blue; margin-bottom:5px;'><b>📍 您搜尋的站點</b></div>{popup_base}"
             z_index = 1000  # 確保它在最上層
             icon_type = 'info-sign'
             icon_prefix = 'glyphicon'
@@ -58,20 +64,20 @@ def create_map(df_stations, my_lat, my_lon, mode="rent"):
             icon_type = 'bicycle'
             icon_prefix = 'fa'
 
-        # 添加站點標記
+        # 添加站點標記 (加上 folium.Popup 確保樣式不會跑版)
         folium.Marker(
             location=[row['StationPositionLat'], row['StationPositionLon']],
-            popup=popup_text,
+            popup=folium.Popup(popup_text, max_width=300),
             tooltip=name_str,
             icon=folium.Icon(color=color, icon=icon_type, prefix=icon_prefix),
             z_index_offset=z_index
         ).add_to(m)
 
-    # 4. 如果搜尋的目標「不是」任何一個站點 (例如只是普通地址或 GPS 定位)，才加上純藍色定位標籤
+    # 4. 如果搜尋的目標「不是」任何一個站點 (例如只是普通地址)，才加上純藍色定位標籤
     if not target_is_station:
         folium.Marker(
             location=[my_lat, my_lon],
-            popup="<b>📍 您在這裡 / 搜尋目標</b>",
+            popup=folium.Popup("<b>📍 您在這裡 / 搜尋目標</b>", max_width=300),
             icon=folium.Icon(color="blue", icon="info-sign"),
             z_index_offset=1000
         ).add_to(m)
