@@ -3,7 +3,7 @@ from supabase import create_client
 
 # 這些變數之後會設定在 GitHub Secrets
 url = os.environ.get("SUPABASE_URL")
-key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") # 注意：上傳需使用 Service Role Key
+key = os.environ.get("SUPABASE_KEY") # 注意：上傳需使用 Service Role Key
 supabase = create_client(url, key)
 
 def upload_model(file_path, bucket_name):
