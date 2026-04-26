@@ -88,6 +88,11 @@ def retrain_model():
     # 6. 儲存模型並覆蓋舊檔案
     joblib.dump(model, 'youbike_model.pkl', compress=9)
     print("✅ 全台模型已成功更新並儲存為 'youbike_model.pkl'")
+    
+    # --- 新增：檢查並印出檔案真實大小 ---
+    file_size_mb = os.path.getsize('youbike_model.pkl') / (1024 * 1024)
+    print(f"✅ 全台模型已成功更新並儲存為 'youbike_model.pkl'")
+    print(f"📦 🔍 關鍵證據！當前模型檔案真實大小為: {file_size_mb:.2f} MB")
 
 if __name__ == "__main__":
     retrain_model()
