@@ -135,10 +135,9 @@ def fetch_all_youbike_data():
 
     # 🚀 使用多執行緒 (開啟 6 個工人同時去抓)
     with ThreadPoolExecutor(max_workers=6) as executor:
-        # executor.map 會將 cities 陣列分配給多個執行緒去跑，並把結果收集回來
         results = executor.map(fetch_city_data, cities)
         for res in results:
-            if res: # 如果該縣市有抓到資料
+            if res:
                 all_stations.extend(res)
         
     df_merged = pd.DataFrame(all_stations)
@@ -148,7 +147,6 @@ def fetch_all_youbike_data():
         return None, None
         
     # 【階段三】取得天氣並進行預測
-    # (此區塊邏輯不變，保持原樣)
     try:
         weather = get_current_weather()
     except Exception:
@@ -303,14 +301,21 @@ else:
             lambda row: calculate_distance(st.session_state.my_lat, st.session_state.my_lon, row['StationPositionLat'], row['StationPositionLon']), axis=1
         )
         
-        nearby_df = filtered_df[filtered_df['Distance_km'] <= 1.5]
+        # 【修正細節 1】：這裡加上 .copy() 避免 Pandas 警告
+        nearby_df = filtered_df[filtered_df['Distance_km'] <= 1.5].copy()
         
         if nearby_df.empty:
             st.warning("😭 您的所在位置周圍 1.5 公里內找不到符合「最少需要數量」條件的站點。")
             m = create_map(pd.DataFrame(columns=filtered_df.columns), st.session_state.my_lat, st.session_state.my_lon, mode=map_mode)
             st_folium(m, use_container_width=True, height=500, key=f"map_empty_{st.session_state.my_lat}_{mode}_{min_amount}")
         else:
-            closest = nearby_df.loc[nearby_df['Distance_km'].idxmin()]
+            # 【修正細節 2】：強制打破距離平手局面，確保地圖只會有一個藍色標記
+            closest_idx = nearby_df['Distance_km'].idxmin()
+            
+            # 將除了「第一名站點」以外的其他站點，距離都微調增加 0.001 公里
+            nearby_df.loc[nearby_df.index != closest_idx, 'Distance_km'] += 0.001
+            
+            closest = nearby_df.loc[closest_idx]
             s_name = closest['StationName']
             st.success(f"🎯 推薦最近站點：**{s_name}** (距離約 {closest['Distance_km']:.2f} km)")
             
