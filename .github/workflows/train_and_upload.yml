@@ -18,6 +18,9 @@ jobs:
         run: pip install -r requirements.txt supabase
         
       - name: Train Model
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python day4_train_model.py  # 這裡會生成 model.pkl
         
       - name: Upload to Supabase
