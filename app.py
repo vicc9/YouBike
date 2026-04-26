@@ -12,6 +12,7 @@ import math
 from dotenv import load_dotenv
 from geopy.geocoders import Nominatim
 from streamlit_geolocation import streamlit_geolocation
+from concurrent.futures import ThreadPoolExecutor
 
 # 引入您自定義的模組
 from day1_youbike import get_tdx_token, get_youbike_data, get_station_info
@@ -44,132 +45,143 @@ def get_coords_from_address(address):
         return None
 
 # --- 資料抓取與快取 ---
-@st.cache_data(show_spinner=False,ttl=600) 
+@st.cache_data(show_spinner="📡 正在極速抓取全台 YouBike 與車況...", ttl=600) 
 def fetch_all_youbike_data():
     
     # 【階段一】獲取 Token 與設定 Session
-    with st.spinner("🔑 正在獲取 TDX 授權與準備連線..."):
-        token_url = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
-        headers = {'content-type': 'application/x-www-form-urlencoded'}
-        
-        client_id = os.getenv("TDX_CLIENT_ID")
-        client_secret = os.getenv("TDX_CLIENT_SECRET")
-        api_headers = {}
-        
-        if not client_id or not client_secret:
-            st.warning("⚠️ 警告：找不到 TDX API 金鑰！目前使用「訪客模式」，很容易觸發限制。")
-        else:
-            data = {
-                'grant_type': 'client_credentials',
-                'client_id': client_id,
-                'client_secret': client_secret
-            }
-            try:
-                res_token = requests.post(token_url, headers=headers, data=data)
-                if res_token.status_code == 200:
-                    token = res_token.json().get('access_token')
-                    api_headers = {'authorization': f'Bearer {token}'}
-                else:
-                    st.warning(f"⚠️ Token 申請失敗 (狀態碼: {res_token.status_code})。退回訪客模式。")
-            except Exception as e:
-                print(f"Token 獲取錯誤: {e}")
+    token_url = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
+    headers = {'content-type': 'application/x-www-form-urlencoded'}
+    
+    client_id = os.getenv("TDX_CLIENT_ID")
+    client_secret = os.getenv("TDX_CLIENT_SECRET")
+    api_headers = {}
+    
+    if not client_id or not client_secret:
+        st.warning("⚠️ 警告：找不到 TDX API 金鑰！目前使用「訪客模式」，很容易觸發限制。")
+    else:
+        data = {
+            'grant_type': 'client_credentials',
+            'client_id': client_id,
+            'client_secret': client_secret
+        }
+        try:
+            res_token = requests.post(token_url, headers=headers, data=data)
+            if res_token.status_code == 200:
+                token = res_token.json().get('access_token')
+                api_headers = {'authorization': f'Bearer {token}'}
+            else:
+                st.warning(f"⚠️ Token 申請失敗 (狀態碼: {res_token.status_code})。退回訪客模式。")
+        except Exception as e:
+            print(f"Token 獲取錯誤: {e}")
 
-        session = requests.Session()
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=1,  
-            status_forcelist=[429, 500, 502, 503, 504]
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=1,  
+        status_forcelist=[429, 500, 502, 503, 504]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
 
-    # 【階段二】依序抓取全台資料
-    with st.spinner("📡 正在從 TDX 依序抓取全台 12 縣市 YouBike 站點與車況 (約需 6-10 秒)..."):
-        cities = ['Taipei', 'NewTaipei', 'Taoyuan', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'Taichung', 'Chiayi', 'ChiayiCounty', 'Tainan', 'Kaohsiung', 'PingtungCounty']
-        all_stations = []
-        
-        for city in cities:
-            station_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Station/City/{city}?%24format=JSON"
-            avail_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/City/{city}?%24format=JSON"
+    # 【階段二】多執行緒並行抓取全台資料 (極速化關鍵)
+    cities = ['Taipei', 'NewTaipei', 'Taoyuan', 'Hsinchu', 'HsinchuCounty', 'MiaoliCounty', 'Taichung', 'Chiayi', 'ChiayiCounty', 'Tainan', 'Kaohsiung', 'PingtungCounty']
+    all_stations = []
+    
+    # 定義單一縣市的抓取任務
+    def fetch_city_data(city):
+        station_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Station/City/{city}?%24format=JSON"
+        avail_url = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/City/{city}?%24format=JSON"
+        city_stations = []
+        try:
+            res_station_req = session.get(station_url, headers=api_headers, timeout=10)
+            res_avail_req = session.get(avail_url, headers=api_headers, timeout=10)
             
-            try:
-                res_station_req = session.get(station_url, headers=api_headers, timeout=10)
-                res_avail_req = session.get(avail_url, headers=api_headers, timeout=10)
+            if res_station_req.status_code == 200 and res_avail_req.status_code == 200:
+                res_station = res_station_req.json()
+                res_avail = res_avail_req.json()
                 
-                if res_station_req.status_code == 200 and res_avail_req.status_code == 200:
-                    res_station = res_station_req.json()
-                    res_avail = res_avail_req.json()
+                if isinstance(res_station, list) and isinstance(res_avail, list):
+                    avail_dict = {
+                        item.get('StationID'): {
+                            'AvailableRentBikes': item.get('AvailableRentBikes', 0),
+                            'AvailableReturnBikes': item.get('AvailableReturnBikes', 0)
+                        } for item in res_avail if item.get('StationID')
+                    }
                     
-                    if isinstance(res_station, list) and isinstance(res_avail, list):
-                        avail_dict = {
-                            item.get('StationID'): {
-                                'AvailableRentBikes': item.get('AvailableRentBikes', 0),
-                                'AvailableReturnBikes': item.get('AvailableReturnBikes', 0)
-                            } for item in res_avail if item.get('StationID')
-                        }
-                        
-                        for station in res_station:
-                            sid = station.get('StationID')
-                            if sid in avail_dict:
-                                all_stations.append({
-                                    'StationUID': station.get('StationUID', ''),
-                                    'StationID': sid,
-                                    'StationName': station.get('StationName', {}).get('Zh_tw', ''),
-                                    'City': city,
-                                    'StationPositionLat': float(station.get('StationPosition', {}).get('PositionLat', 0)),
-                                    'StationPositionLon': float(station.get('StationPosition', {}).get('PositionLon', 0)),
-                                    'latitude': float(station.get('StationPosition', {}).get('PositionLat', 0)),
-                                    'longitude': float(station.get('StationPosition', {}).get('PositionLon', 0)),
-                                    'BikesCapacity': station.get('BikesCapacity', 0),
-                                    'AvailableRentBikes': avail_dict[sid]['AvailableRentBikes'],
-                                    'AvailableReturnBikes': avail_dict[sid]['AvailableReturnBikes']
-                                })
-                else:
-                     print(f"❌ {city} API 回傳狀態碼異常: Station={res_station_req.status_code}, Avail={res_avail_req.status_code}")
-                    
-            except Exception as e:
-                print(f"抓取 {city} 發生錯誤: {e}")
+                    for station in res_station:
+                        sid = station.get('StationID')
+                        if sid in avail_dict:
+                            city_stations.append({
+                                'StationUID': station.get('StationUID', ''),
+                                'StationID': sid,
+                                'StationName': station.get('StationName', {}).get('Zh_tw', ''),
+                                'City': city,
+                                'StationPositionLat': float(station.get('StationPosition', {}).get('PositionLat', 0)),
+                                'StationPositionLon': float(station.get('StationPosition', {}).get('PositionLon', 0)),
+                                'latitude': float(station.get('StationPosition', {}).get('PositionLat', 0)),
+                                'longitude': float(station.get('StationPosition', {}).get('PositionLon', 0)),
+                                'BikesCapacity': station.get('BikesCapacity', 0),
+                                'AvailableRentBikes': avail_dict[sid]['AvailableRentBikes'],
+                                'AvailableReturnBikes': avail_dict[sid]['AvailableReturnBikes']
+                            })
+            else:
+                 print(f"❌ {city} API 回傳異常: Station={res_station_req.status_code}, Avail={res_avail_req.status_code}")
+                 
+        except Exception as e:
+            print(f"抓取 {city} 發生錯誤: {e}")
             
-            time.sleep(0.5)
-            
-        df_merged = pd.DataFrame(all_stations)
+        return city_stations
+
+    # 🚀 使用多執行緒 (開啟 6 個工人同時去抓)
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        # executor.map 會將 cities 陣列分配給多個執行緒去跑，並把結果收集回來
+        results = executor.map(fetch_city_data, cities)
+        for res in results:
+            if res: # 如果該縣市有抓到資料
+                all_stations.extend(res)
+        
+    df_merged = pd.DataFrame(all_stations)
 
     # 若無資料直接中斷
     if df_merged.empty:
         return None, None
         
     # 【階段三】取得天氣並進行預測
-    with st.spinner("🤖 正在取得即時天氣並透過 AI 模型預測借還車狀況..."):
+    # (此區塊邏輯不變，保持原樣)
+    try:
         weather = get_current_weather()
-        now = datetime.now()
-        features = pd.DataFrame({
-            'hour': [(now.hour + 1) % 24] * len(df_merged),
-            'day_of_week': [now.weekday()] * len(df_merged),
-            'is_weekend': [1 if now.weekday() >= 5 else 0] * len(df_merged),
-            'month': [now.month] * len(df_merged),
-            'is_holiday': [0] * len(df_merged), 
-            'temperature': [weather.get('Temperature', 25) if weather else 25] * len(df_merged),
-            'precipitation': [weather.get('Precipitation', 0) if weather else 0] * len(df_merged),
-            'wind_speed': [0] * len(df_merged), 
-            'aqi': [50] * len(df_merged),       
-            'dist_to_mrt': [99999] * len(df_merged), 
-            'station_capacity': df_merged['BikesCapacity'], 
-            'bikes_1h_ago': df_merged['AvailableRentBikes'] 
-        })
+    except Exception:
+        weather = None
         
-        try:
-            features_dict = features.to_dict(orient='records') 
-            response = requests.post("https://youbike-wrfi.onrender.com/predict", json=features_dict, timeout=120)
+    now = datetime.now()
+    features = pd.DataFrame({
+        'hour': [(now.hour + 1) % 24] * len(df_merged),
+        'day_of_week': [now.weekday()] * len(df_merged),
+        'is_weekend': [1 if now.weekday() >= 5 else 0] * len(df_merged),
+        'month': [now.month] * len(df_merged),
+        'is_holiday': [0] * len(df_merged), 
+        'temperature': [weather.get('Temperature', 25) if weather else 25] * len(df_merged),
+        'precipitation': [weather.get('Precipitation', 0) if weather else 0] * len(df_merged),
+        'wind_speed': [0] * len(df_merged), 
+        'aqi': [50] * len(df_merged),       
+        'dist_to_mrt': [99999] * len(df_merged), 
+        'station_capacity': df_merged['BikesCapacity'], 
+        'bikes_1h_ago': df_merged['AvailableRentBikes'] 
+    })
     
-            if response.status_code == 200:
-                df_merged['Predicted_Bikes'] = response.json()['predictions']
-            else:
-                df_merged['Predicted_Bikes'] = df_merged['AvailableRentBikes']
-        except Exception as e:
-            print(f"API 呼叫失敗: {e}")
+    try:
+        features_dict = features.to_dict(orient='records') 
+        response = requests.post("https://youbike-wrfi.onrender.com/predict", json=features_dict, timeout=120)
+
+        if response.status_code == 200:
+            df_merged['Predicted_Bikes'] = response.json()['predictions']
+        else:
             df_merged['Predicted_Bikes'] = df_merged['AvailableRentBikes']
-            
+    except Exception as e:
+        print(f"API 呼叫失敗: {e}")
+        df_merged['Predicted_Bikes'] = df_merged['AvailableRentBikes']
+        
     return df_merged, weather
 
 # --- Streamlit 介面 ---
