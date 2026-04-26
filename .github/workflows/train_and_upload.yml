@@ -1,0 +1,27 @@
+name: Train and Upload Model
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天凌晨自動執行一次
+  workflow_dispatch:      # 也可以手動觸發
+
+jobs:
+  train_and_upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with: {python-version: '3.9'}
+        
+      - name: Install dependencies
+        run: pip install -r requirements.txt supabase
+        
+      - name: Train Model
+        run: python train.py  # 這裡會生成 model.pkl
+        
+      - name: Upload to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python upload_model.py
