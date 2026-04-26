@@ -23,7 +23,6 @@ def retrain_model():
     supabase: Client = create_client(supabase_url, supabase_key)
     
     print("📥 正在從資料庫分批下載全台歷史數據 (突破 1000 筆限制)...")
-    # --- 🛠️ 修正 1：分批下載全台海量資料 ---
     all_data = []
     limit = 1000
     offset = 0
@@ -35,7 +34,7 @@ def retrain_model():
             break
         all_data.extend(data)
         if len(data) < limit:
-            break  # 如果抓到的資料少於 1000 筆，代表抓完了
+            break  
         offset += limit
         
     df_history = pd.DataFrame(all_data)
@@ -47,9 +46,6 @@ def retrain_model():
     print(f"✅ 成功下載 {len(df_history)} 筆全台歷史資料！")
 
     print("⚙️ 正在處理特徵矩陣與缺失值...")
-    # --- 🛠️ 修正 2：處理全台資料的缺失值 (NaN) ---
-    # 非捷運城市的 dist_to_mrt 會是空值，我們將其補上極大數值 (代表非常遠)
-    # 其他氣象資料若缺失，用平均值或預設值填補
     df_history.fillna({
         'dist_to_mrt': 99999,  
         'wind_speed': df_history.get('wind_speed', pd.Series([0])).mean(),
@@ -57,32 +53,29 @@ def retrain_model():
         'temperature': 25,
         'precipitation': 0,
         'station_capacity': 15,
-        'bikes_1h_ago': df_history['available_rent_bikes'] # 假設沒資料就先拿當下車數墊檔
+        'bikes_1h_ago': df_history['available_rent_bikes'] 
     }, inplace=True)
 
     # 2. 特徵工程
-    # --- ⚠️ 修正 3：特徵對齊警告 ---
-    # 這裡的 X 特徵必須與 app.py 裡預測時準備的 features DataFrame "欄位名稱"與"數量"完全一致！
     X = df_history[[
         'hour', 'day_of_week', 'is_weekend', 'month', 'is_holiday', 
         'temperature', 'precipitation', 'wind_speed', 'aqi',      
         'dist_to_mrt', 'station_capacity',                        
         'bikes_1h_ago'                                           
     ]]
-    y = df_history['available_rent_bikes'] # 目標：預測可借車輛數
+    y = df_history['available_rent_bikes']
 
     # 3. 切分訓練集與測試集
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # 4. 建立並訓練 Random Forest 模型
-    print("🧠 正在訓練 Histogram-based Gradient Boosting 模型 (速度更快、檔案極小)...")
+    # 4. 建立並訓練 模型
+    print("🧠 正在訓練 Histogram-based Gradient Boosting 模型 (極限瘦身版)...")
     
-    # 🌟 2. 改用這個全新的輕量級演算法
-    # max_iter=100 類似於原本的 n_estimators
-    # max_depth=15 限制深度，進一步壓縮檔案大小
+    # 🌟 終極瘦身秘訣：強制限制樹的生長規模
     model = HistGradientBoostingRegressor(
-        max_iter=100,
-        max_depth=15,
+        max_iter=50,       # 迭代次數從 100 降到 50 (減少樹的數量)
+        max_depth=5,       # 樹的深度從 15 降到 5 (大幅減少檔案體積，保證小於 50MB！)
+        max_leaf_nodes=15, # 限制葉節點數量，進一步壓縮
         random_state=42
     ) 
     model.fit(X_train, y_train)
