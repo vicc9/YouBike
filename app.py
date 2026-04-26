@@ -44,7 +44,7 @@ def get_coords_from_address(address):
         return None
 
 # --- 資料抓取與快取 ---
-@st.cache_data(ttl=600) 
+@st.cache_data(show_spinner=False,ttl=600) 
 def fetch_all_youbike_data():
     
     # 【階段一】獲取 Token 與設定 Session
