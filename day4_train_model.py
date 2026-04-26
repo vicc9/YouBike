@@ -86,7 +86,7 @@ def retrain_model():
     print(f"📊 模型訓練完成！全台預測平均誤差為: {mae:.2f} 輛車")
 
     # 6. 儲存模型並覆蓋舊檔案
-    joblib.dump(model, 'youbike_model.pkl')
+    joblib.dump(model, 'youbike_model.pkl', compress=3)
     print("✅ 全台模型已成功更新並儲存為 'youbike_model.pkl'")
 
 if __name__ == "__main__":
