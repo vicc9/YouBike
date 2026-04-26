@@ -76,8 +76,18 @@ def retrain_model():
 
     # 4. 建立並訓練 Random Forest 模型
     print("🧠 正在訓練隨機森林模型 (全台資料量大，可能需要幾分鐘，請喝口水等待一下)...")
-    # n_jobs=-1 代表火力全開，使用電腦所有的 CPU 核心來加速訓練
-    model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1) 
+    
+    # 🌟 【強力瘦身版參數設定】🌟
+    # 1. n_estimators=50: 把樹的數量從 100 棵減半到 50 棵 (直接砍半檔案大小)
+    # 2. max_depth=15: 限制每棵樹最多只能往下長 15 層，不准無限制生長 (極大減少檔案體積)
+    # 3. min_samples_leaf=5: 限制葉節點最少要有 5 筆資料，避免記憶太多細碎沒用的規則
+    model = RandomForestRegressor(
+        n_estimators=50, 
+        max_depth=15, 
+        min_samples_leaf=5, 
+        random_state=42, 
+        n_jobs=-1
+    ) 
     model.fit(X_train, y_train)
 
     # 5. 評估模型表現
@@ -86,7 +96,7 @@ def retrain_model():
     print(f"📊 模型訓練完成！全台預測平均誤差為: {mae:.2f} 輛車")
 
     # 6. 儲存模型並覆蓋舊檔案
-    joblib.dump(model, 'youbike_model.pkl', compress=3)
+    joblib.dump(model, 'youbike_model.pkl', compress=9)
     print("✅ 全台模型已成功更新並儲存為 'youbike_model.pkl'")
 
 if __name__ == "__main__":
