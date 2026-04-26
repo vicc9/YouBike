@@ -9,16 +9,16 @@ jobs:
   train_and_upload:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with: {python-version: '3.9'}
         
       - name: Install dependencies
         run: pip install -r requirements.txt supabase
         
       - name: Train Model
-        run: python train.py  # 這裡會生成 model.pkl
+        run: python day4_train_model.py  # 這裡會生成 model.pkl
         
       - name: Upload to Supabase
         env:
