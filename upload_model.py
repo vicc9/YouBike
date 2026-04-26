@@ -18,4 +18,4 @@ def upload_model(file_path, bucket_name):
     print(f"✅ 模型 {file_name} 已上傳至 Supabase Storage")
 
 if __name__ == "__main__":
-    upload_model("model.pkl", "models")
+    upload_model("youbike_model.pkl", "models")
