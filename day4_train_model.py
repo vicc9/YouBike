@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error
 import joblib
@@ -75,18 +75,15 @@ def retrain_model():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     # 4. 建立並訓練 Random Forest 模型
-    print("🧠 正在訓練隨機森林模型 (全台資料量大，可能需要幾分鐘，請喝口水等待一下)...")
+    print("🧠 正在訓練 Histogram-based Gradient Boosting 模型 (速度更快、檔案極小)...")
     
-    # 🌟 【強力瘦身版參數設定】🌟
-    # 1. n_estimators=50: 把樹的數量從 100 棵減半到 50 棵 (直接砍半檔案大小)
-    # 2. max_depth=15: 限制每棵樹最多只能往下長 15 層，不准無限制生長 (極大減少檔案體積)
-    # 3. min_samples_leaf=5: 限制葉節點最少要有 5 筆資料，避免記憶太多細碎沒用的規則
-    model = RandomForestRegressor(
-        n_estimators=50, 
-        max_depth=15, 
-        min_samples_leaf=5, 
-        random_state=42, 
-        n_jobs=-1
+    # 🌟 2. 改用這個全新的輕量級演算法
+    # max_iter=100 類似於原本的 n_estimators
+    # max_depth=15 限制深度，進一步壓縮檔案大小
+    model = HistGradientBoostingRegressor(
+        max_iter=100,
+        max_depth=15,
+        random_state=42
     ) 
     model.fit(X_train, y_train)
 
