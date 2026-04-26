@@ -20,8 +20,20 @@ def create_map(df_stations, my_lat, my_lon, mode="rent"):
         control_scale=True
     )
     
-    # 🌟 紀錄「搜尋的地點是否剛好就是 YouBike 站點」
     target_is_station = False
+
+    # 🌟 核心修正：先掃描找出距離 (my_lat, my_lon) 絕對最近的站點 UID
+    closest_uid = None
+    min_dist = float('inf')
+    
+    for _, row in df_stations.iterrows():
+        lat_diff = abs(float(row['StationPositionLat']) - my_lat)
+        lon_diff = abs(float(row['StationPositionLon']) - my_lon)
+        # 使用畢氏定理計算直線距離
+        dist = (lat_diff**2 + lon_diff**2)**0.5 
+        if dist < min_dist:
+            min_dist = dist
+            closest_uid = row.get('StationUID')
 
     # 3. 標註 YouBike 站點
     for _, row in df_stations.iterrows():
@@ -45,18 +57,13 @@ def create_map(df_stations, my_lat, my_lon, mode="rent"):
         elif amount < 10: color = 'orange'
         else: color = 'green'
 
-        # 🌟 核心修正：強制轉換為浮點數，並將誤差放寬到 0.0005 (約 50 公尺，吸收 GPS 誤差)
-        station_lat = float(row['StationPositionLat'])
-        station_lon = float(row['StationPositionLon'])
-        lat_diff = abs(station_lat - my_lat)
-        lon_diff = abs(station_lon - my_lon)
-        
-        is_target = (lat_diff < 0.0005) and (lon_diff < 0.0005)
+        # 🌟 確保只有「唯一最接近，且距離小於閾值」的那一個站點會變成藍色
+        is_target = (row.get('StationUID') == closest_uid) and (min_dist < 0.0005)
 
         if is_target:
             target_is_station = True
             color = 'blue'  # 強制將搜尋的目標站點變成藍色
-            popup_text = f"<div style='color:blue; margin-bottom:5px;'><b>📍 您搜尋的站點</b></div>{popup_base}"
+            popup_text = f"<div style='color:blue; margin-bottom:5px;'><b>📍 您搜尋的站點 / 推薦站點</b></div>{popup_base}"
             z_index = 1000  # 確保它在最上層
             icon_type = 'info-sign'
             icon_prefix = 'glyphicon'
@@ -68,7 +75,7 @@ def create_map(df_stations, my_lat, my_lon, mode="rent"):
 
         # 添加站點標記
         folium.Marker(
-            location=[station_lat, station_lon],
+            location=[float(row['StationPositionLat']), float(row['StationPositionLon'])],
             popup=folium.Popup(popup_text, max_width=300),
             tooltip=name_str,
             icon=folium.Icon(color=color, icon=icon_type, prefix=icon_prefix),
