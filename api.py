@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
-from supabase import create_client, Client # 🌟 新增：引入 supabase SDK
+from supabase import create_client, Client # 🌟 引入 supabase SDK
 
 app = FastAPI(title="YouBike 智慧預測 API")
 
@@ -14,12 +14,20 @@ BUCKET_NAME = 'models'
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY") # 🔐 改用私密管理員金鑰
 
-def download_model():
+# 宣告全域變數來儲存模型
+model = None
+
+# ==========================================
+# 🆕 修正一：將模型下載與載入放進「啟動事件」中
+# ==========================================
+@app.on_event("startup")
+async def startup_event():
+    global model
     print("⏳ 正在透過私密權限從 Supabase 下載模型...")
     
     if not SUPABASE_URL or not SUPABASE_KEY:
-        print("❌ 錯誤：缺少 SUPABASE_URL 或 SUPABASE_SERVICE_KEY 環境變數，無法連線。")
-        return False
+        print("❌ 錯誤：缺少 SUPABASE_URL 或 SUPABASE_KEY 環境變數，無法連線。")
+        return
         
     try:
         # 初始化 Supabase 客戶端
@@ -33,21 +41,17 @@ def download_model():
             f.write(res)
             
         print("✅ 模型私有下載成功！")
-        return True
+        
+        # 下載完成後，立刻載入記憶體
+        if os.path.exists(MODEL_PATH):
+            model = joblib.load(MODEL_PATH)
+            print("✅ 模型已成功載入記憶體！API 已完全準備就緒。")
+        else:
+            print("❌ 錯誤：找不到下載的模型檔案，無法載入。")
+            
     except Exception as e:
-        print(f"❌ 私有下載過程發生錯誤: {e}")
-        return False
+        print(f"❌ 私有下載或載入過程發生錯誤: {e}")
 
-# 執行下載
-download_model()
-
-# 載入模型
-if os.path.exists(MODEL_PATH):
-    model = joblib.load(MODEL_PATH)
-    print("✅ 模型已成功載入記憶體！")
-else:
-    model = None
-    print("❌ 錯誤：找不到模型檔案，API 將無法運作。")
 
 # 🌟 請求資料結構
 class PredictionFeatures(BaseModel):
@@ -68,8 +72,9 @@ class PredictionFeatures(BaseModel):
     
 @app.post("/predict")
 def predict_bikes(features: List[PredictionFeatures]):
+    global model
     if model is None:
-        return {"error": "Model is not loaded."}
+        return {"error": "Model is not loaded yet. Please wait a moment."}
         
     # 1. 將所有輸入特徵轉換為 DataFrame
     df_input = pd.DataFrame([f.dict() for f in features])
@@ -82,7 +87,7 @@ def predict_bikes(features: List[PredictionFeatures]):
     ]
     model_input = df_input[feature_cols]
     
-    # 3. 進行預測：此時得到的 predictions 是「變化量 (Delta)」 (例如：+2.3 或 -1.5)
+    # 3. 進行預測：此時得到的 predictions 是「變化量 (Delta)」
     deltas = model.predict(model_input)
     
     # 4. 計算最終結果並執行上下限防呆
@@ -95,22 +100,26 @@ def predict_bikes(features: List[PredictionFeatures]):
         final_bikes = int(round(current + delta))
         
         # 防呆機制：確保車輛不會是負數，也不會大於該站的車柱總數
-        # ⚠️ 此時如果 capacity 是 np.int64，final_bikes 也會變成 np.int64
         final_bikes = max(0, min(capacity, final_bikes))
         
-        # 🌟 關鍵修復：強制將 numpy.int64 轉換為 Python 原生 int，再加入列表
+        # 🌟 強制轉換為 Python 原生 int，再加入列表
         final_results.append(int(final_bikes))
         
     return {"predictions": final_results}
 
+# ==========================================
+# 🆕 修正二：幫兩個不同的窗口取不同的名字！
+# ==========================================
+
+# 🪟 第一個窗口：檢查模型有沒有掛上
 @app.get("/")
-def health_check():
+def root_info():
     return {
         "status": "API is running!",
         "model_loaded": model is not None
     }
     
-# 加在你的 api.py 裡面
+# 🪟 第二個窗口：專門給 cron-job 敲門用的 (越輕量越好)
 @app.get("/health")
-def health_check():
+def keep_alive():
     return {"status": "ok", "message": "Server is awake!"}
