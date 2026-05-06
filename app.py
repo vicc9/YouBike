@@ -240,14 +240,53 @@ else:
     search_query = st.sidebar.text_input("請輸入站點名稱、地標或地址：", placeholder="例如: 台北車站 或 左營巨蛋", value="")
     
     if search_query:
-        sq_tw = search_query.replace("台", "臺")
-        sq_cn = search_query.replace("臺", "台")
+        # 🌟 建立城市名稱與 TDX 英文代碼的對照表
+        city_start_map = {
+            '台北市': ['Taipei'], '臺北市': ['Taipei'], '台北': ['Taipei'], '臺北': ['Taipei'],
+            '新北市': ['NewTaipei'], '新北': ['NewTaipei'],
+            '桃園市': ['Taoyuan'], '桃園': ['Taoyuan'],
+            '新竹市': ['Hsinchu'], '新竹縣': ['HsinchuCounty'], '新竹': ['Hsinchu', 'HsinchuCounty'],
+            '苗栗縣': ['MiaoliCounty'], '苗栗': ['MiaoliCounty'],
+            '台中市': ['Taichung'], '臺中市': ['Taichung'], '台中': ['Taichung'], '臺中': ['Taichung'],
+            '嘉義市': ['Chiayi'], '嘉義縣': ['ChiayiCounty'], '嘉義': ['Chiayi', 'ChiayiCounty'],
+            '台南市': ['Tainan'], '臺南市': ['Tainan'], '台南': ['Tainan'], '臺南': ['Tainan'],
+            '高雄市': ['Kaohsiung'], '高雄': ['Kaohsiung'],
+            '屏東縣': ['PingtungCounty'], '屏東': ['PingtungCounty']
+        }
+
+        matched_cities = []
+        remaining_query = search_query.strip()
         
-        mask = base_df['StationName'].astype(str).str.contains(sq_tw, case=False, na=False) | \
-               base_df['StationName'].astype(str).str.contains(sq_cn, case=False, na=False) | \
-               base_df['StationName'].astype(str).str.contains(search_query, case=False, na=False)
+        # 🌟 檢查搜尋字串開頭是否符合任何一個城市 (字數多的優先比對，如先比對'台北市'再比對'台北')
+        for prefix in sorted(city_start_map.keys(), key=len, reverse=True):
+            if remaining_query.startswith(prefix):
+                matched_cities = city_start_map[prefix]
+                # 截去城市名稱，保留剩下的關鍵字作為進階搜尋
+                remaining_query = remaining_query[len(prefix):].strip() 
+                break
+                
+        if matched_cities:
+            # 🎯 條件 A：鎖定該城市的所有站點
+            mask = base_df['City'].isin(matched_cities)
+            
+            # 如果除了城市名稱外，還有輸入其他關鍵字 (例如 "台中 巨蛋")
+            if remaining_query:
+                sq_tw = remaining_query.replace("台", "臺")
+                sq_cn = remaining_query.replace("臺", "台")
+                name_mask = base_df['StationName'].astype(str).str.contains(sq_tw, case=False, na=False) | \
+                            base_df['StationName'].astype(str).str.contains(sq_cn, case=False, na=False) | \
+                            base_df['StationName'].astype(str).str.contains(remaining_query, case=False, na=False)
+                mask = mask & name_mask
+        else:
+            # 🎯 條件 B：沒有輸入城市名稱 -> 維持原本的站點名稱模糊搜尋
+            sq_tw = search_query.replace("台", "臺")
+            sq_cn = search_query.replace("臺", "台")
+            mask = base_df['StationName'].astype(str).str.contains(sq_tw, case=False, na=False) | \
+                   base_df['StationName'].astype(str).str.contains(sq_cn, case=False, na=False) | \
+                   base_df['StationName'].astype(str).str.contains(search_query, case=False, na=False)
                
-        matched_df = base_df[mask].head(15)
+        # 🌟 將清單顯示數量拉高到 50，讓單純輸入「台中」時，選單裡能呈現更多該城市的站點
+        matched_df = base_df[mask].head(50)
         
         if not matched_df.empty:
             options_list = (matched_df['StationName']).tolist()
@@ -258,7 +297,6 @@ else:
             st.session_state.has_located = True
             st.sidebar.success(f"📍 已定位至：{selected_station}")
         else:
-            # 🌟 刪除原本的 st.sidebar.info(...)，取消藍色提示框
             coords = get_coords_from_address(search_query)
             if coords:
                 st.session_state.my_lat, st.session_state.my_lon = coords
