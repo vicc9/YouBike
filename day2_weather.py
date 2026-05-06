@@ -65,11 +65,22 @@ def get_all_cities_weather():
                 
                 # 如果該縣市還是預設值，就用找到的測站資料覆蓋
                 if city_weather_dict[eng_city]['Temperature'] == 25.0:
-                    temp = station['WeatherElement']['AirTemperature']
+                    temp = station['WeatherElement'].get('AirTemperature', 25.0)
+                    
+                    # 🌧️ 嘗試抓取降雨量 (如果沒有欄位則預設為 0.0)
+                    precip = station['WeatherElement'].get('Now', {}).get('Precipitation', 0.0)
+                    if not precip: 
+                        precip = station['WeatherElement'].get('DailyPrecipitation', 0.0)
+                    
+                    # 防呆：處理微量降雨 'T' 與異常值 (-99)
+                    if precip == 'T' or float(precip) < 0:
+                        precip = 0.0
+                    
                     # 防呆：確保溫度不是負數異常值 (如 -99)
                     if float(temp) > -10: 
                         city_weather_dict[eng_city]['Temperature'] = float(temp)
-                        city_weather_dict[eng_city]['Weather'] = station['WeatherElement']['Weather']
+                        city_weather_dict[eng_city]['Precipitation'] = float(precip)
+                        city_weather_dict[eng_city]['Weather'] = station['WeatherElement'].get('Weather', '晴')
                         
         return city_weather_dict
     except Exception as e:

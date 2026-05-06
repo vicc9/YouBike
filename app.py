@@ -282,13 +282,32 @@ filtered_df = df_all[df_all[target_col] >= min_amount].copy()
 # ----------------------------------------
 # 📊 顯示區 (地圖與資訊)
 # ----------------------------------------
-col1, col2 = st.columns([1, 1])
+# 🌟 動態判斷使用者目前所在的縣市 (藉由距離最近的站點反查)
+local_city_eng = 'Taipei'
+if st.session_state.has_located and not base_df.empty:
+    # 算出距離定位點最近的站點，抓取它的 City
+    base_df['Temp_Dist'] = base_df.apply(
+        lambda row: calculate_distance(st.session_state.my_lat, st.session_state.my_lon, row['StationPositionLat'], row['StationPositionLon']), axis=1
+    )
+    local_city_eng = base_df.loc[base_df['Temp_Dist'].idxmin(), 'City']
+
+# 中英縣市對照表 (用於顯示)
+city_zh_mapping = {
+    'Taipei': '臺北市', 'NewTaipei': '新北市', 'Taoyuan': '桃園市',
+    'Hsinchu': '新竹市', 'HsinchuCounty': '新竹縣', 'MiaoliCounty': '苗栗縣',
+    'Taichung': '臺中市', 'Chiayi': '嘉義市', 'ChiayiCounty': '嘉義縣',
+    'Tainan': '臺南市', 'Kaohsiung': '高雄市', 'PingtungCounty': '屏東縣'
+}
+local_city_zh = city_zh_mapping.get(local_city_eng, '臺北市')
 
 display_temp, display_precip = 25.0, 0.0
 if current_weather_dict:
-    taipei_weather = current_weather_dict.get('Taipei', {})
-    display_temp = taipei_weather.get('Temperature', 25.0)
-    display_precip = taipei_weather.get('Precipitation', 0.0)
+    # 🌟 根據所在位置抓取當地氣候，不再全台綁定台北！
+    local_weather = current_weather_dict.get(local_city_eng, {})
+    display_temp = local_weather.get('Temperature', 25.0)
+    display_precip = local_weather.get('Precipitation', 0.0)
+
+col1, col2 = st.columns([1, 1])
 
 with col1:
     if predict_minutes > 0:
@@ -297,7 +316,8 @@ with col1:
         st.info("⚡ 目前顯示為即時車況 (現在)")
         
 with col2:
-    st.write(f"🌤️ **全台概估氣溫：** {display_temp}°C | 🌧️ **降雨：** {display_precip}mm")
+    # 🌟 畫面字眼改成「當地氣溫」並顯示當地縣市名稱
+    st.write(f"📍 **{local_city_zh} 當地氣溫：** {display_temp}°C | 🌧️ **降雨：** {display_precip}mm")
     st.write(f"📋 **全台符合條件站點總數：** {len(filtered_df)} 站")
 
 if not st.session_state.has_located:
