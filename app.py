@@ -285,17 +285,52 @@ else:
                    base_df['StationName'].astype(str).str.contains(sq_cn, case=False, na=False) | \
                    base_df['StationName'].astype(str).str.contains(search_query, case=False, na=False)
                
-        # 🌟 將清單顯示數量拉高到 50，讓單純輸入「台中」時，選單裡能呈現更多該城市的站點
-        matched_df = base_df[mask].head(50)
+        # ==========================================
+        # 🆕 分頁邏輯實作
+        # ==========================================
+        all_matched_df = base_df[mask]  # 取得所有符合條件的資料，不設 head 上限
+        total_count = len(all_matched_df)
+
+        if total_count > 0:
+            st.sidebar.write(f"🔍 找到 {total_count} 個相符站點")
+            
+            # 設定每頁顯示數量
+            items_per_page = 50
+            total_pages = math.ceil(total_count / items_per_page)
+
+            # 如果頁數大於 1，顯示分頁切換器
+            if total_pages > 1:
+                # 使用 key 確保搜尋字串改變時，頁碼會重置
+                page_number = st.sidebar.number_input(
+                    f"分頁瀏覽 (共 {total_pages} 頁)：",
+                    min_value=1,
+                    max_value=total_pages,
+                    value=1,
+                    step=1,
+                    key=f"page_num_{search_query}" 
+                )
+            else:
+                page_number = 1
+
+            # 計算目前頁面要顯示的資料切片
+            start_idx = (page_number - 1) * items_per_page
+            end_idx = start_idx + items_per_page
+            current_page_df = all_matched_df.iloc[start_idx:end_idx]
+
+            # 顯示當前頁面的下拉選單
+            options_list = current_page_df['StationName'].tolist()
+            selected_station = st.sidebar.selectbox(
+                f"💡 請選取站點 (第 {page_number} 頁)：", 
+                options=options_list,
+                key=f"select_{search_query}_{page_number}"
+            )
         
-        if not matched_df.empty:
-            options_list = (matched_df['StationName']).tolist()
-            selected_station = st.sidebar.selectbox("💡 找到相符站點，請確認：", options=options_list)
-            target_row = matched_df[(matched_df['StationName']) == selected_station].iloc[0]
-            st.session_state.my_lat = float(target_row['StationPositionLat'])
-            st.session_state.my_lon = float(target_row['StationPositionLon'])
-            st.session_state.has_located = True
-            st.sidebar.success(f"📍 已定位至：{selected_station}")
+            if selected_station:
+                target_row = current_page_df[current_page_df['StationName'] == selected_station].iloc[0]
+                st.session_state.my_lat = float(target_row['StationPositionLat'])
+                st.session_state.my_lon = float(target_row['StationPositionLon'])
+                st.session_state.has_located = True
+                st.sidebar.success(f"📍 已定位至：{selected_station}")
         else:
             coords = get_coords_from_address(search_query)
             if coords:
