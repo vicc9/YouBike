@@ -53,10 +53,12 @@ def get_all_cities_weather():
     
     # 建立氣象署中文縣市名與 TDX 英文縣市名的對應表
     city_mapping = {
-        '臺北市': 'Taipei', '新北市': 'NewTaipei', '桃園市': 'Taoyuan',
+        '臺北市': 'Taipei', '新北市': 'NewTaipei', '基隆市': 'Keelung', '桃園市': 'Taoyuan',
         '新竹市': 'Hsinchu', '新竹縣': 'HsinchuCounty', '苗栗縣': 'MiaoliCounty',
-        '臺中市': 'Taichung', '嘉義市': 'Chiayi', '嘉義縣': 'ChiayiCounty',
-        '臺南市': 'Tainan', '高雄市': 'Kaohsiung', '屏東縣': 'PingtungCounty'
+        '臺中市': 'Taichung', '彰化縣': 'Changhua', '南投縣': 'Nantou', '雲林縣': 'Yunlin',
+        '嘉義市': 'Chiayi', '嘉義縣': 'ChiayiCounty', '臺南市': 'Tainan', '高雄市': 'Kaohsiung',
+        '屏東縣': 'PingtungCounty', '宜蘭縣': 'Yilan', '花蓮縣': 'Hualien', '臺東縣': 'Taitung',
+        '澎湖縣': 'Penghu', '金門縣': 'Kinmen', '連江縣': 'Lienchiang'
     }
     
     city_weather_dict = {eng_city: default_weather.copy() for eng_city in city_mapping.values()}

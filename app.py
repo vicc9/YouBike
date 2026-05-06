@@ -40,7 +40,20 @@ def get_coords_from_address(address):
         return None
     except:
         return None
-
+        
+@st.cache_data(ttl=3600)        
+def get_city_from_coords(lat, lon):
+    try:
+        geolocator = Nominatim(user_agent="youbike_tw_search_v9", timeout=5)
+        location = geolocator.reverse((lat, lon), exactly_one=True)
+        if location:
+            address = location.raw.get('address', {})
+            # 台灣的縣市通常放在 county 或 city 欄位
+            city = address.get('county', address.get('city', '臺北市'))
+            return city.replace('台', '臺') # 統一轉為正體字以利比對
+        return '臺北市'
+    except:
+        return '臺北市'
 # ==========================================
 # 🆕 步驟一：嚴格獨立的「基礎資料抓取」 (不受 UI 影響)
 # ==========================================
@@ -282,23 +295,25 @@ filtered_df = df_all[df_all[target_col] >= min_amount].copy()
 # ----------------------------------------
 # 📊 顯示區 (地圖與資訊)
 # ----------------------------------------
-# 🌟 動態判斷使用者目前所在的縣市 (藉由距離最近的站點反查)
-local_city_eng = 'Taipei'
-if st.session_state.has_located and not base_df.empty:
-    # 算出距離定位點最近的站點，抓取它的 City
-    base_df['Temp_Dist'] = base_df.apply(
-        lambda row: calculate_distance(st.session_state.my_lat, st.session_state.my_lon, row['StationPositionLat'], row['StationPositionLon']), axis=1
-    )
-    local_city_eng = base_df.loc[base_df['Temp_Dist'].idxmin(), 'City']
 
 # 中英縣市對照表 (用於顯示)
 city_zh_mapping = {
-    'Taipei': '臺北市', 'NewTaipei': '新北市', 'Taoyuan': '桃園市',
+    'Taipei': '臺北市', 'NewTaipei': '新北市', 'Keelung': '基隆市', 'Taoyuan': '桃園市',
     'Hsinchu': '新竹市', 'HsinchuCounty': '新竹縣', 'MiaoliCounty': '苗栗縣',
-    'Taichung': '臺中市', 'Chiayi': '嘉義市', 'ChiayiCounty': '嘉義縣',
-    'Tainan': '臺南市', 'Kaohsiung': '高雄市', 'PingtungCounty': '屏東縣'
+    'Taichung': '臺中市', 'Changhua': '彰化縣', 'Nantou': '南投縣', 'Yunlin': '雲林縣',
+    'Chiayi': '嘉義市', 'ChiayiCounty': '嘉義縣', 'Tainan': '臺南市', 'Kaohsiung': '高雄市',
+    'PingtungCounty': '屏東縣', 'Yilan': '宜蘭縣', 'Hualien': '花蓮縣', 'Taitung': '臺東縣',
+    'Penghu': '澎湖縣', 'Kinmen': '金門縣', 'Lienchiang': '連江縣'
 }
-local_city_zh = city_zh_mapping.get(local_city_eng, '臺北市')
+# 建立中文轉英文的反向字典
+eng_mapping = {v: k for k, v in city_zh_mapping.items()}
+
+# 🌟 動態判斷使用者目前所在的縣市 (直接用座標反查真實地點！)
+local_city_zh = '臺北市'
+if st.session_state.has_located:
+    local_city_zh = get_city_from_coords(st.session_state.my_lat, st.session_state.my_lon)
+
+local_city_eng = eng_mapping.get(local_city_zh, 'Taipei')
 
 display_temp, display_precip = 25.0, 0.0
 if current_weather_dict:
@@ -319,6 +334,19 @@ with col2:
     # 🌟 畫面字眼改成「當地氣溫」並顯示當地縣市名稱
     st.write(f"📍 **{local_city_zh} 當地氣溫：** {display_temp}°C | 🌧️ **降雨：** {display_precip}mm")
     st.write(f"📋 **全台符合條件站點總數：** {len(filtered_df)} 站")
+
+# 👇 ==================================================== 👇
+# 🌟 新增：無 YouBike 服務縣市的特別提示邏輯
+# 定義目前有 YouBike 服務的縣市名單
+youbike_supported_cities = [
+    '臺北市', '新北市', '桃園市', '新竹市', '新竹縣', '苗栗縣',
+    '臺中市', '嘉義市', '嘉義縣', '臺南市', '高雄市', '屏東縣'
+]
+
+# 如果使用者已定位，且所在縣市不在服務名單內，跳出專屬提示
+if st.session_state.has_located and local_city_zh not in youbike_supported_cities:
+    st.warning(f"⚠️ 溫馨提醒：**{local_city_zh}** 目前尚無 YouBike 2.0 服務，或是系統暫未支援此區域，因此地圖周圍不會顯示任何站點喔！")
+# 👆 ==================================================== 👆
 
 if not st.session_state.has_located:
     st.info("👋 歡迎使用！請從左側面板搜尋地點或使用 GPS 定位，地圖才會開始顯示您附近的 YouBike 站點喔！")
