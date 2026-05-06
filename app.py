@@ -132,7 +132,7 @@ def fetch_base_data():
 # ==========================================
 # 🆕 步驟二：處理 AI 預測邏輯 (只有改時間才會呼叫 API)
 # ==========================================
-@st.cache_data(show_spinner="🧠 正在呼叫 AI 計算未來車況...", ttl=600)
+@st.cache_data(show_spinner="🧠 正在呼叫 AI 計算未來車況...", ttl=60)
 def get_predictions(df_merged, all_weather_dict, target_mins):
     df_pred = df_merged.copy()
     
@@ -154,9 +154,9 @@ def get_predictions(df_merged, all_weather_dict, target_mins):
         'is_holiday': [0] * len(df_pred), 
         'temperature': df_pred['temperature'],
         'precipitation': df_pred['precipitation'],
-        'wind_speed': [0] * len(df_pred), 
-        'aqi': [50] * len(df_pred),       
-        'dist_to_mrt': [99999] * len(df_pred), 
+        'wind_speed': [0.0] * len(df_pred), 
+        'aqi': [50.0] * len(df_pred),       
+        'dist_to_mrt': [1000.0] * len(df_pred), 
         'station_capacity': df_pred['BikesCapacity'], 
         'bikes_1h_ago': df_pred['AvailableRentBikes'],
         'target_minutes': [target_mins] * len(df_pred),
@@ -172,6 +172,7 @@ def get_predictions(df_merged, all_weather_dict, target_mins):
             print(f"API 錯誤碼: {response.status_code}, 訊息: {response.text}") # 建議加這行方便除錯
             df_pred['Predicted_Bikes'] = df_pred['AvailableRentBikes']
     except Exception as e:
+        st.error(f"🚨 無法連線至後端 AI 伺服器，詳細錯誤: {e}")
         df_pred['Predicted_Bikes'] = df_pred['AvailableRentBikes']
         
     return df_pred
