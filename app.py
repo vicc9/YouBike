@@ -132,7 +132,7 @@ def fetch_base_data():
 # ==========================================
 # 🆕 步驟二：處理 AI 預測邏輯 (只有改時間才會呼叫 API)
 # ==========================================
-@st.cache_data(show_spinner="🧠 正在呼叫 AI 計算未來車況...", ttl=60)
+@st.cache_data(show_spinner="🧠 正在呼叫 AI 計算未來車況...", ttl=600)
 def get_predictions(df_merged, all_weather_dict, target_mins):
     df_pred = df_merged.copy()
     
