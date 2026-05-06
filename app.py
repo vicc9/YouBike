@@ -167,10 +167,18 @@ def get_predictions(df_merged, all_weather_dict, target_mins):
         features_dict = features.to_dict(orient='records') 
         response = requests.post("https://youbike-wrfi.onrender.com/predict", json=features_dict, timeout=90)
         if response.status_code == 200:
-            df_pred['Predicted_Bikes'] = response.json()['predictions']
+            res_data = response.json()
+            # 🛡️ 檢查回傳的 JSON 裡面有沒有 predictions
+            if "predictions" in res_data:
+                df_pred['Predicted_Bikes'] = res_data['predictions']
+            else:
+                # 🎯 如果 API 回傳 {"error": "Model is not loaded."} 會被這裡抓到
+                st.error(f"🚨 後端 API 回報錯誤: {res_data.get('error', '未知錯誤')}")
+                df_pred['Predicted_Bikes'] = df_pred['AvailableRentBikes']
         else:
-            print(f"API 錯誤碼: {response.status_code}, 訊息: {response.text}") # 建議加這行方便除錯
+            st.error(f"🚨 API 拒絕處理或資料格式不符 (狀態碼: {response.status_code}) \n\n 錯誤內容: {response.text}")
             df_pred['Predicted_Bikes'] = df_pred['AvailableRentBikes']
+            
     except Exception as e:
         st.error(f"🚨 無法連線至後端 AI 伺服器，詳細錯誤: {e}")
         df_pred['Predicted_Bikes'] = df_pred['AvailableRentBikes']
