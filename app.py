@@ -165,7 +165,7 @@ def get_predictions(df_merged, all_weather_dict, target_mins):
     
     try:
         features_dict = features.to_dict(orient='records') 
-        response = requests.post("https://youbike-wrfi.onrender.com/predict", json=features_dict, timeout=90)
+        response = requests.post("https://youbike-wrfi.onrender.com/predict", json=features_dict, timeout=100)
         if response.status_code == 200:
             res_data = response.json()
             # 🛡️ 檢查回傳的 JSON 裡面有沒有 predictions

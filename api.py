@@ -109,3 +109,8 @@ def health_check():
         "status": "API is running!",
         "model_loaded": model is not None
     }
+    
+# 加在你的 api.py 裡面
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "message": "Server is awake!"}
