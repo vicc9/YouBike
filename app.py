@@ -54,6 +54,7 @@ def get_city_from_coords(lat, lon):
         return '臺北市'
     except:
         return '臺北市'
+
 # ==========================================
 # 🆕 步驟一：嚴格獨立的「基礎資料抓取」 (不受 UI 影響)
 # ==========================================
@@ -168,7 +169,7 @@ def get_predictions(df_merged, all_weather_dict, target_mins):
         'temperature': df_pred['temperature'],
         'precipitation': df_pred['precipitation'],
         'wind_speed': [0.0] * len(df_pred), 
-        'aqi': [50.0] * len(df_pred),       
+        'aqi': [50.0] * len(df_pred),        
         'dist_to_mrt': [1000.0] * len(df_pred), 
         'station_capacity': df_pred['BikesCapacity'], 
         'bikes_1h_ago': df_pred['AvailableRentBikes'],
@@ -257,7 +258,7 @@ else:
             st.session_state.has_located = True
             st.sidebar.success(f"📍 已定位至：{selected_station}")
         else:
-            st.sidebar.info(f"💡 找不到名為「{search_query}」的站點，正在嘗試搜尋地址座標...")
+            # 🌟 刪除原本的 st.sidebar.info(...)，取消藍色提示框
             coords = get_coords_from_address(search_query)
             if coords:
                 st.session_state.my_lat, st.session_state.my_lon = coords
@@ -335,18 +336,11 @@ with col2:
     st.write(f"📍 **{local_city_zh} 當地氣溫：** {display_temp}°C | 🌧️ **降雨：** {display_precip}mm")
     st.write(f"📋 **全台符合條件站點總數：** {len(filtered_df)} 站")
 
-# 👇 ==================================================== 👇
-# 🌟 新增：無 YouBike 服務縣市的特別提示邏輯
 # 定義目前有 YouBike 服務的縣市名單
 youbike_supported_cities = [
     '臺北市', '新北市', '桃園市', '新竹市', '新竹縣', '苗栗縣',
     '臺中市', '嘉義市', '嘉義縣', '臺南市', '高雄市', '屏東縣'
 ]
-
-# 如果使用者已定位，且所在縣市不在服務名單內，跳出專屬提示
-if st.session_state.has_located and local_city_zh not in youbike_supported_cities:
-    st.warning(f"⚠️ 溫馨提醒：**{local_city_zh}** 目前尚無 YouBike 2.0 服務，或是系統暫未支援此區域，因此地圖周圍不會顯示任何站點喔！")
-# 👆 ==================================================== 👆
 
 if not st.session_state.has_located:
     st.info("👋 歡迎使用！請從左側面板搜尋地點或使用 GPS 定位，地圖才會開始顯示您附近的 YouBike 站點喔！")
@@ -361,7 +355,12 @@ else:
         nearby_df = filtered_df[filtered_df['Distance_km'] <= 1.5].copy()
         
         if nearby_df.empty:
-            st.warning("😭 您的所在位置周圍 1.5 公里內找不到符合條件的站點。")
+            # 🌟 整合黃色警告條邏輯：若是無服務縣市顯示專屬文案，若是有服務但附近無車則顯示距離過遠文案
+            if local_city_zh not in youbike_supported_cities:
+                st.warning(f"⚠️ 溫馨提醒：**{local_city_zh}** 目前尚無 YouBike 2.0 服務，或是系統暫未支援此區域，因此地圖周圍不會顯示任何站點喔！")
+            else:
+                st.warning("😭 您的所在位置周圍 1.5 公里內找不到符合條件的站點。")
+                
             m = create_map(pd.DataFrame(columns=filtered_df.columns), st.session_state.my_lat, st.session_state.my_lon, mode=map_mode)
             st_folium(m, use_container_width=True, height=500, key=f"map_empty_{st.session_state.my_lat}_{mode}_{min_amount}")
         else:
