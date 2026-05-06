@@ -34,7 +34,6 @@ def get_coords_from_address(address):
         search_query = address
         if "台灣" not in search_query and "Taiwan" not in search_query:
             search_query = f"台灣 {search_query}"
-
         location = geolocator.geocode(search_query)
         if location:
             return location.latitude, location.longitude
@@ -43,11 +42,10 @@ def get_coords_from_address(address):
         return None
 
 # ==========================================
-# 🆕 步驟一：只負責抓取基礎資料 (每 10 分鐘更新一次)
+# 🆕 步驟一：嚴格獨立的「基礎資料抓取」 (不受 UI 影響)
 # ==========================================
 @st.cache_data(show_spinner="📡 正在極速抓取全台 YouBike 與天氣資料...", ttl=600) 
 def fetch_base_data():
-    # 獲取 Token 與設定 Session
     token_url = "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token"
     headers = {'content-type': 'application/x-www-form-urlencoded'}
     client_id = os.getenv("TDX_CLIENT_ID")
@@ -79,10 +77,14 @@ def fetch_base_data():
                 res = session.get("https://tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json", timeout=10)
                 if res.status_code == 200:
                     for item in res.json():
+                        lat = float(item.get('lat', item.get('latitude', 0)))
+                        lng = float(item.get('lng', item.get('longitude', 0)))
+                        if lat == 0 or lng == 0: continue # 🛡️ 座標防呆，避免地圖掉進海裡
+                        
                         city_stations.append({
                             'StationUID': str(item.get('sno')), 'StationID': str(item.get('sno')),
                             'StationName': item.get('sna', '').replace('YouBike2.0_', ''), 'City': city,
-                            'StationPositionLat': float(item.get('lat', 0)), 'StationPositionLon': float(item.get('lng', 0)),
+                            'StationPositionLat': lat, 'StationPositionLon': lng,
                             'BikesCapacity': int(item.get('tot', 0)), 'AvailableRentBikes': int(item.get('sbi', 0)),
                             'AvailableReturnBikes': int(item.get('bemp', 0))
                         })
@@ -92,11 +94,14 @@ def fetch_base_data():
                 res = session.get("https://data.ntpc.gov.tw/api/datasets/010e5b15-3823-4b20-b401-b1cf000550c5/json?page=0&size=3000", timeout=10)
                 if res.status_code == 200:
                     for item in res.json():
-                        lon = float(item.get('lng', item.get('lon', 0))) 
+                        lat = float(item.get('lat', item.get('latitude', 0)))
+                        lng = float(item.get('lng', item.get('longitude', item.get('lon', 0))))
+                        if lat == 0 or lng == 0: continue # 🛡️ 座標防呆
+                        
                         city_stations.append({
                             'StationUID': str(item.get('sno')), 'StationID': str(item.get('sno')),
                             'StationName': item.get('sna', '').replace('YouBike2.0_', ''), 'City': city,
-                            'StationPositionLat': float(item.get('lat', 0)), 'StationPositionLon': lon,
+                            'StationPositionLat': lat, 'StationPositionLon': lng,
                             'BikesCapacity': int(item.get('tot', 0)), 'AvailableRentBikes': int(item.get('sbi', 0)),
                             'AvailableReturnBikes': int(item.get('bemp', 0))
                         })
@@ -117,11 +122,14 @@ def fetch_base_data():
                     for station in res_station:
                         sid = station.get('StationID')
                         if sid in avail_dict:
+                            lat = float(station.get('StationPosition', {}).get('PositionLat', 0))
+                            lng = float(station.get('StationPosition', {}).get('PositionLon', 0))
+                            if lat == 0 or lng == 0: continue
+                            
                             city_stations.append({
                                 'StationUID': station.get('StationUID', ''), 'StationID': sid,
                                 'StationName': station.get('StationName', {}).get('Zh_tw', ''), 'City': city,
-                                'StationPositionLat': float(station.get('StationPosition', {}).get('PositionLat', 0)),
-                                'StationPositionLon': float(station.get('StationPosition', {}).get('PositionLon', 0)),
+                                'StationPositionLat': lat, 'StationPositionLon': lng,
                                 'BikesCapacity': station.get('BikesCapacity', 0),
                                 'AvailableRentBikes': avail_dict[sid]['AvailableRentBikes'],
                                 'AvailableReturnBikes': avail_dict[sid]['AvailableReturnBikes']
@@ -147,11 +155,10 @@ def fetch_base_data():
     return df_merged, all_weather_dict
 
 # ==========================================
-# 🆕 步驟二：處理 AI 預測邏輯 (當時間變更時才重跑)
+# 🆕 步驟二：處理 AI 預測邏輯 (只有改時間才會呼叫 API)
 # ==========================================
 @st.cache_data(show_spinner="🧠 正在呼叫 AI 計算未來車況...", ttl=600)
 def get_predictions(df_merged, all_weather_dict, target_mins):
-    # 複製一份資料以免改到原本的快取
     df_pred = df_merged.copy()
     
     if target_mins == 0:
@@ -202,7 +209,7 @@ if 'my_lon' not in st.session_state: st.session_state.my_lon = 121.5170
 if 'has_located' not in st.session_state: st.session_state.has_located = False
 if 'last_location_method' not in st.session_state: st.session_state.last_location_method = "🔍 智慧搜尋地點"
 
-# 🌟 取得基礎資料 (這層現在被堅固的保護，不受 UI 操作影響)
+# 🌟 取得基礎資料 (已被保護，打字搜尋不會重抓)
 base_df, current_weather_dict = fetch_base_data()
 
 if base_df is None:
@@ -237,7 +244,7 @@ else:
         sq_tw = search_query.replace("台", "臺")
         sq_cn = search_query.replace("臺", "台")
         
-        # 🌟 這裡直接拿 base_df 搜尋，不觸發任何 API
+        # 🌟 這裡直接使用 base_df 搜尋，不會觸發任何 API 與等待時間
         mask = base_df['StationName'].astype(str).str.contains(sq_tw, case=False, na=False) | \
                base_df['StationName'].astype(str).str.contains(sq_cn, case=False, na=False) | \
                base_df['StationName'].astype(str).str.contains(search_query, case=False, na=False)
@@ -280,7 +287,7 @@ if st.sidebar.button("🔄 立即重新整理車況"):
     st.rerun()
 
 # ----------------------------------------
-# ⚙️ 核心資料觸發點：拿 base_df 進行預測
+# ⚙️ 核心資料觸發點：傳入 base_df 進行預測
 # ----------------------------------------
 df_all = get_predictions(base_df, current_weather_dict, predict_minutes)
 
@@ -296,14 +303,15 @@ filtered_df = df_all[df_all[target_col] >= min_amount].copy()
 # ----------------------------------------
 col1, col2 = st.columns([1, 1])
 
-# UI 天氣提示設定
+# UI 天氣顯示判斷
 display_temp, display_precip = 25.0, 0.0
 if current_weather_dict:
+    # 如果使用者是在雙北，抓取台北天氣；否則也可以動態抓取，此處以台北為預設示範
     taipei_weather = current_weather_dict.get('Taipei', {})
     display_temp = taipei_weather.get('Temperature', 25.0)
     display_precip = taipei_weather.get('Precipitation', 0.0)
 
-# 🌟 修正後的 UI 顯示，將天氣移到右側 col2
+# 🌟 UI 更新：依要求將天氣移至 col2，不再被 st.info 擠下去
 with col1:
     if predict_minutes > 0:
         st.info(f"🔮 系統正為您展示 **{predict_minutes} 分鐘後** 的預測車況！")
