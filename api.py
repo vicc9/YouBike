@@ -74,8 +74,7 @@ def predict_bikes(features: List[PredictionFeatures]):
     # 1. 將所有輸入特徵轉換為 DataFrame
     df_input = pd.DataFrame([f.dict() for f in features])
     
-    # 2. 🌟 嚴格篩選模型「訓練時」真正使用的欄位
-    # 必須排除掉 current_bikes，否則模型會因為沒看過這個特徵而報錯
+    # 2. 嚴格篩選模型「訓練時」真正使用的欄位
     feature_cols = [
         'hour', 'day_of_week', 'is_weekend', 'month', 'is_holiday',
         'temperature', 'precipitation', 'wind_speed', 'aqi',
@@ -86,7 +85,7 @@ def predict_bikes(features: List[PredictionFeatures]):
     # 3. 進行預測：此時得到的 predictions 是「變化量 (Delta)」 (例如：+2.3 或 -1.5)
     deltas = model.predict(model_input)
     
-    # 4. 🌟 計算最終結果並執行上下限防呆
+    # 4. 計算最終結果並執行上下限防呆
     final_results = []
     for i, delta in enumerate(deltas):
         current = df_input.loc[i, 'current_bikes']
@@ -96,9 +95,11 @@ def predict_bikes(features: List[PredictionFeatures]):
         final_bikes = int(round(current + delta))
         
         # 防呆機制：確保車輛不會是負數，也不會大於該站的車柱總數
+        # ⚠️ 此時如果 capacity 是 np.int64，final_bikes 也會變成 np.int64
         final_bikes = max(0, min(capacity, final_bikes))
         
-        final_results.append(final_bikes)
+        # 🌟 關鍵修復：強制將 numpy.int64 轉換為 Python 原生 int，再加入列表
+        final_results.append(int(final_bikes))
         
     return {"predictions": final_results}
 
