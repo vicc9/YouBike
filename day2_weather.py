@@ -7,7 +7,7 @@ load_dotenv()
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- 給資料庫爬蟲用的舊版函式 (保持不變) ---
+# --- 給資料庫爬蟲用的舊版函式 (保持不變，僅升級降雨量解析) ---
 def get_current_weather():
     """獲取氣象署即時天氣資料 (預設單一城市)供資料庫使用"""
     api_key = os.getenv('CWA_API_KEY')
@@ -21,12 +21,25 @@ def get_current_weather():
         stations = data['records']['Station']
         for station in stations:
             if station.get('GeoInfo', {}).get('CountyName') == '高雄市':
-                temp = station['WeatherElement']['AirTemperature']
-                weather = station['WeatherElement']['Weather']
+                w_elem = station['WeatherElement']
+                temp = w_elem['AirTemperature']
+                weather = w_elem['Weather']
+                
+                # 🌧️ 確保舊版也能正確解析降雨量
+                precip_raw = w_elem.get('Now', {}).get('Precipitation')
+                try:
+                    precip_str = str(precip_raw).strip().upper()
+                    if precip_str == 'T': precip = 0.1
+                    else: 
+                        precip = float(precip_raw)
+                        if precip < 0: precip = 0.0
+                except:
+                    precip = 0.0
+                    
                 return {
                     'Weather': weather, 
                     'Temperature': float(temp),
-                    'Precipitation': 0.0
+                    'Precipitation': precip
                 }
         return {'Weather': '晴', 'Temperature': 25.0, 'Precipitation': 0.0}
     except Exception:
@@ -65,22 +78,39 @@ def get_all_cities_weather():
                 
                 # 如果該縣市還是預設值，就用找到的測站資料覆蓋
                 if city_weather_dict[eng_city]['Temperature'] == 25.0:
-                    temp = station['WeatherElement'].get('AirTemperature', 25.0)
+                    w_elem = station.get('WeatherElement', {})
+                    temp = w_elem.get('AirTemperature', 25.0)
                     
-                    # 🌧️ 嘗試抓取降雨量 (如果沒有欄位則預設為 0.0)
-                    precip = station['WeatherElement'].get('Now', {}).get('Precipitation', 0.0)
-                    if not precip: 
-                        precip = station['WeatherElement'].get('DailyPrecipitation', 0.0)
+                    # 🌧️ 嘗試抓取降雨量 (如果即時降雨是 0，改抓今日累積降雨)
+                    precip_raw = w_elem.get('Now', {}).get('Precipitation')
                     
-                    # 防呆：處理微量降雨 'T' 與異常值 (-99)
-                    if precip == 'T' or float(precip) < 0:
+                    # 解決字串 "0.0" 造成的 if not 判斷失效問題
+                    if precip_raw is None or str(precip_raw).strip() in ['', '0.0', '0', '-99', '-99.0']:
+                        # 嘗試抓取當日累積降雨量 (通常放在 DailyExtreme 裡面)
+                        daily_extreme = w_elem.get('DailyExtreme', {}).get('DailyPrecipitation', {}).get('PrecipitationAmount')
+                        if daily_extreme is not None and str(daily_extreme).strip() not in ['', '-99', '-99.0']:
+                            precip_raw = daily_extreme
+                        else:
+                            # 最後的備案
+                            precip_raw = w_elem.get('DailyPrecipitation', 0.0)
+                    
+                    # 防呆：處理微量降雨 'T' 與其他字串轉換問題
+                    try:
+                        precip_str = str(precip_raw).strip().upper()
+                        if precip_str == 'T':
+                            precip = 0.1  # 實務上將微量降雨標示為 0.1 mm
+                        else:
+                            precip = float(precip_raw)
+                            if precip < 0:  # 確保不會出現負數的降雨量異常值
+                                precip = 0.0
+                    except (ValueError, TypeError):
                         precip = 0.0
                     
                     # 防呆：確保溫度不是負數異常值 (如 -99)
                     if float(temp) > -10: 
                         city_weather_dict[eng_city]['Temperature'] = float(temp)
-                        city_weather_dict[eng_city]['Precipitation'] = float(precip)
-                        city_weather_dict[eng_city]['Weather'] = station['WeatherElement'].get('Weather', '晴')
+                        city_weather_dict[eng_city]['Precipitation'] = precip
+                        city_weather_dict[eng_city]['Weather'] = w_elem.get('Weather', '晴')
                         
         return city_weather_dict
     except Exception as e:
