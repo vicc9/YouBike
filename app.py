@@ -159,7 +159,8 @@ def get_predictions(df_merged, all_weather_dict, target_mins):
         'dist_to_mrt': [99999] * len(df_pred), 
         'station_capacity': df_pred['BikesCapacity'], 
         'bikes_1h_ago': df_pred['AvailableRentBikes'],
-        'target_minutes': [target_mins] * len(df_pred) 
+        'target_minutes': [target_mins] * len(df_pred),
+        'current_bikes': df_pred['AvailableRentBikes']  # 🌟 新增這行：把當下車況傳給 API
     })
     
     try:
@@ -168,6 +169,7 @@ def get_predictions(df_merged, all_weather_dict, target_mins):
         if response.status_code == 200:
             df_pred['Predicted_Bikes'] = response.json()['predictions']
         else:
+            print(f"API 錯誤碼: {response.status_code}, 訊息: {response.text}") # 建議加這行方便除錯
             df_pred['Predicted_Bikes'] = df_pred['AvailableRentBikes']
     except Exception as e:
         df_pred['Predicted_Bikes'] = df_pred['AvailableRentBikes']
