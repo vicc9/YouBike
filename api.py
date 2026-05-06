@@ -12,7 +12,7 @@ app = FastAPI(title="YouBike 智慧預測 API")
 MODEL_PATH = 'youbike_model.pkl'
 BUCKET_NAME = 'models'
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") # 🔐 改用私密管理員金鑰
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY") # 🔐 改用私密管理員金鑰
 
 def download_model():
     print("⏳ 正在透過私密權限從 Supabase 下載模型...")
