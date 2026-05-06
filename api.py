@@ -1,34 +1,50 @@
 import os
-import requests
 import joblib
 import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List
+from supabase import create_client, Client # 🌟 新增：引入 supabase SDK
 
 app = FastAPI(title="YouBike 智慧預測 API")
 
+# 🌟 設定檔案路徑與 Supabase 環境變數
 MODEL_PATH = 'youbike_model.pkl'
+BUCKET_NAME = 'models'
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-MODEL_URL = f"{SUPABASE_URL}/storage/v1/object/public/models/{MODEL_PATH}"
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY") # 🔐 改用私密管理員金鑰
 
 def download_model():
-    print(f"⏳ 正在從雲端下載最新模型: {MODEL_URL}")
+    print("⏳ 正在透過私密權限從 Supabase 下載模型...")
+    
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("❌ 錯誤：缺少 SUPABASE_URL 或 SUPABASE_SERVICE_KEY 環境變數，無法連線。")
+        return False
+        
     try:
-        response = requests.get(MODEL_URL)
-        if response.status_code == 200:
-            with open(MODEL_PATH, "wb") as f:
-                f.write(response.content)
-            print("✅ 模型下載完成！")
-        else:
-            print(f"⚠️ 下載失敗 (狀態碼: {response.status_code})，將嘗試載入本地舊版模型。")
+        # 初始化 Supabase 客戶端
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        
+        # 透過 SDK 直接從 Bucket 下載檔案的二進位內容
+        res = supabase.storage.from_(BUCKET_NAME).download(MODEL_PATH)
+        
+        # 寫入本地端
+        with open(MODEL_PATH, "wb") as f:
+            f.write(res)
+            
+        print("✅ 模型私有下載成功！")
+        return True
     except Exception as e:
-        print(f"❌ 下載過程發生錯誤: {e}")
+        print(f"❌ 私有下載過程發生錯誤: {e}")
+        return False
 
+# 執行下載
 download_model()
 
+# 載入模型
 if os.path.exists(MODEL_PATH):
     model = joblib.load(MODEL_PATH)
+    print("✅ 模型已成功載入記憶體！")
 else:
     model = None
     print("❌ 錯誤：找不到模型檔案，API 將無法運作。")
@@ -48,7 +64,7 @@ class PredictionFeatures(BaseModel):
     station_capacity: int
     bikes_1h_ago: int
     target_minutes: int  
-    current_bikes: int   # 🌟 新增：接收當下車輛數，用於計算最終結果
+    current_bikes: int   # 🌟 接收當下車輛數，用於計算最終結果
     
 @app.post("/predict")
 def predict_bikes(features: List[PredictionFeatures]):
